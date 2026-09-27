@@ -69,6 +69,7 @@ export class OrderStore {
   /** Eventos que llegaron antes de tiempo (antes del snapshot o después de un hueco), por versión. */
   private pending = new Map<number, OrderEvent>();
   private listeners = new Set<() => void>();
+  private appliedListeners = new Set<(event: OrderEvent) => void>();
 
   get state(): OrderSnapshot | null {
     return this.current;
@@ -95,7 +96,7 @@ export class OrderStore {
       this.remember(event);
       return 'gap';
     }
-    this.current = reduceEvent(this.current, event);
+    this.reduce(event);
     this.drainPending();
     this.notify();
     return 'applied';
@@ -111,6 +112,17 @@ export class OrderStore {
     return () => this.listeners.delete(listener);
   }
 
+  /** Se llama con cada evento efectivamente aplicado, en orden de versión (para el panel de actividad). */
+  onApplied(listener: (event: OrderEvent) => void): () => void {
+    this.appliedListeners.add(listener);
+    return () => this.appliedListeners.delete(listener);
+  }
+
+  private reduce(event: OrderEvent) {
+    this.current = reduceEvent(this.current!, event);
+    for (const l of this.appliedListeners) l(event);
+  }
+
   private remember(event: OrderEvent) {
     if (this.pending.size < MAX_PENDING) this.pending.set(event.version, event);
   }
@@ -123,7 +135,7 @@ export class OrderStore {
     let next = this.pending.get(this.current.order.version + 1);
     while (next) {
       this.pending.delete(next.version);
-      this.current = reduceEvent(this.current, next);
+      this.reduce(next);
       next = this.pending.get(this.current.order.version + 1);
     }
   }

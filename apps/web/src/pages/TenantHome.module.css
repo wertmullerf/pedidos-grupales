@@ -1,0 +1,153 @@
+.page {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hero {
+  margin: 0 -16px;
+  padding: 40px 24px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--on-brand);
+  background:
+    radial-gradient(
+      120% 90% at 50% 0%,
+      color-mix(in oklab, var(--brand) 70%, white) 0%,
+      transparent 70%
+    ),
+    var(--brand);
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+}
+
+.title {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  max-width: 300px;
+  opacity: 0.92;
+}
+
+.section {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: fade-up 0.35s var(--ease) both;
+}
+
+.sectionTitle {
+  font-size: 19px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.branches {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.branches legend {
+  margin-bottom: 8px;
+}
+
+.branch {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.branch:focus-within {
+  outline: 3px solid color-mix(in oklab, var(--brand) 35%, white);
+}
+
+.branchActive {
+  border-color: var(--brand);
+  background: var(--brand-softer);
+}
+
+.branch[data-closed] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.branchName {
+  font-weight: 650;
+}
+
+.branchAddress {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.closed {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--danger);
+}
+
+.skeleton {
+  height: 120px;
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--line), var(--bg), var(--line));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite linear;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.joinRow {
+  display: flex;
+  gap: 8px;
+}
+
+.codeInput {
+  flex: 1;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 14px;
+}
+
+.back {
+  align-self: center;
+  font-size: 14px;
+  color: var(--muted);
+  text-decoration: none;
+}

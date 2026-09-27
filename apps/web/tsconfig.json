@@ -6,7 +6,8 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "types": ["vite/client"],
-    "noEmit": true
+    "noEmit": true,
+    "customConditions": ["source"]
   },
   "include": ["src", "vite.config.ts"]
 }

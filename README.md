@@ -18,6 +18,19 @@ npm test                       # tests de integración contra el Postgres/Redis 
 ```
 
 Postgres queda expuesto en el puerto **5433** del host (para no chocar con un Postgres local).
+Los tests de integración usan su propia base (`pedido_test`), así no ensucian la de la demo.
+
+```bash
+npm run dev:web        # front en http://localhost:5173 (habla con nginx → las 2 instancias)
+npm run simulate       # N bots operando a la vez; al final verifica que todos quedaron iguales
+npm run e2e            # Playwright: 3 navegadores, desconexión + resync, cierre y envío
+npm run screenshots    # capturas de las pantallas principales en demo/screenshots
+npm run record-demo    # video de 3 celulares lado a lado: demo/demo.mp4 y demo/demo.gif
+```
+
+`npm run simulate -- --code ABC234` suma los bots a un pedido que tengas abierto en el navegador,
+para verlos operar en vivo. Con `--urls http://localhost:3001,http://localhost:3002` cada bot se
+conecta directo a una instancia distinta.
 
 ## Decisiones de concurrencia
 

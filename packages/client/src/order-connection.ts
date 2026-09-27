@@ -15,6 +15,12 @@ import { OrderStore } from './order-store.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'resynced';
 
+export interface ResyncInfo {
+  mode: 'events' | 'snapshot';
+  fromVersion: number | null;
+  toVersion: number | null;
+}
+
 export interface OrderConnectionOptions {
   /** Origen del server (o de nginx). */
   url: string;
@@ -45,6 +51,7 @@ export class OrderConnection {
   private resyncAgain = false;
   private everSynced = false;
   private listeners = new Set<() => void>();
+  private resyncListeners = new Set<(info: ResyncInfo) => void>();
 
   constructor(opts: OrderConnectionOptions) {
     this.ackTimeoutMs = opts.ackTimeoutMs ?? 5000;
@@ -135,6 +142,21 @@ export class OrderConnection {
     return () => this.listeners.delete(listener);
   }
 
+  onResync(listener: (info: ResyncInfo) => void): () => void {
+    this.resyncListeners.add(listener);
+    return () => this.resyncListeners.delete(listener);
+  }
+
+  get connected(): boolean {
+    return this.socket.connected;
+  }
+
+  /** Resuelve cuando el socket está conectado (inmediatamente si ya lo está). */
+  whenConnected(): Promise<void> {
+    if (this.socket.connected) return Promise.resolve();
+    return new Promise((resolve) => this.socket.once('connect', () => resolve()));
+  }
+
   /**
    * Pide al server lo que falta desde la versión actual. Si ya hay un resync en curso, agenda
    * otro al terminar en lugar de lanzar dos en paralelo.
@@ -154,8 +176,11 @@ export class OrderConnection {
           if (!ack.ok) throw new ConnectionError(ack.error.code);
           this.stats.resyncs++;
           this.stats.lastResyncMode = ack.mode;
+          const fromVersion = this.store.version;
           if (ack.mode === 'snapshot') this.store.setSnapshot(ack.snapshot);
           else for (const event of ack.events) this.store.applyEvent(event);
+          const info = { mode: ack.mode, fromVersion, toVersion: this.store.version };
+          for (const l of this.resyncListeners) l(info);
         } while (this.resyncAgain || this.store.hasGap);
       } finally {
         this.resyncInFlight = null;

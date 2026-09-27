@@ -3,3 +3,6 @@ dist
 .env
 *.log
 coverage
+demo/raw
+test-results
+playwright-report
