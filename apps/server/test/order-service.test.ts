@@ -174,11 +174,27 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
       const { code, orderId, host } = await setupOrder();
       const itemId = await addBurger(host);
 
+      // Medimos que de verdad corran en paralelo, en conexiones distintas del pool.
+      const clients = new Set<unknown>();
+      let checkedOut = 0;
+      let maxCheckedOut = 0;
+      const onAcquire = (client: unknown) => {
+        clients.add(client);
+        maxCheckedOut = Math.max(maxCheckedOut, ++checkedOut);
+      };
+      const onRelease = () => checkedOut--;
+      pool.on('acquire', onAcquire).on('release', onRelease);
+
       const results = await Promise.all(
         Array.from({ length: 50 }, () =>
           service.incrementItem(host, { ...op(), itemId, delta: 1 }),
         ),
       );
+      pool.off('acquire', onAcquire).off('release', onRelease);
+
+      expect(pool.options.max).toBeGreaterThan(1);
+      expect(clients.size).toBeGreaterThan(1);
+      expect(maxCheckedOut).toBeGreaterThan(1);
       expect(results.every((r) => r.status === 'applied')).toBe(true);
 
       const snap = await snapshot(code, orderId);
@@ -313,6 +329,38 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
         service.removeItem(host, { clientOpId, itemId: itemId.id }),
       ).rejects.toMatchObject({ code: 'CLIENT_OP_CONFLICT' });
     });
+
+    it('removeItem repetido: el reintento es "duplicate", no ITEM_NOT_FOUND', async () => {
+      const { code, orderId, host } = await setupOrder();
+      const itemId = await addBurger(host);
+      const cmd = { clientOpId: randomUUID(), itemId };
+
+      const first = await service.removeItem(host, cmd);
+      const second = await service.removeItem(host, cmd);
+      expect(first.status).toBe('applied');
+      expect(second).toEqual({ status: 'duplicate', event: first.event });
+
+      const snap = await snapshot(code, orderId);
+      expect(snap.items).toHaveLength(0);
+      expect(snap.order.version).toBe(first.event.version);
+    });
+
+    it('updateNotes repetido se aplica una sola vez', async () => {
+      const { code, orderId, host } = await setupOrder();
+      const itemId = await addBurger(host);
+      const cmd = { clientOpId: randomUUID(), itemId, notes: 'sin sal' };
+
+      const results = await Promise.all([
+        service.updateNotes(host, cmd),
+        service.updateNotes(host, cmd),
+        service.updateNotes(host, cmd),
+      ]);
+      expect(results.filter((r) => r.status === 'applied')).toHaveLength(1);
+
+      const snap = await snapshot(code, orderId);
+      expect(snap.items[0]!.notes).toBe('sin sal');
+      expect(snap.order.version).toBe(results[0]!.event.version);
+    });
   });
 
   describe('cierre del pedido', () => {
@@ -335,11 +383,18 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
       await expect(
         service.addItem(guest, { ...op(), menuItemId: menu['Gaseosa']!.id }),
       ).rejects.toMatchObject({ code: 'ORDER_LOCKED' });
+      await expect(
+        service.updateNotes(guest, { ...op(), itemId, notes: 'tarde' }),
+      ).rejects.toMatchObject({ code: 'ORDER_LOCKED', status: 409 });
+      await expect(service.removeItem(guest, { ...op(), itemId })).rejects.toMatchObject({
+        code: 'ORDER_LOCKED',
+        status: 409,
+      });
       await expect(service.lockOrder(host, op())).rejects.toMatchObject({ code: 'ORDER_LOCKED' });
 
       const snap = await snapshot(code, orderId);
       expect(snap.order.status).toBe('locked');
-      expect(snap.items[0]!.quantity).toBe(1);
+      expect(snap.items[0]).toMatchObject({ id: itemId, quantity: 1, notes: '' });
     });
 
     it('lock en carrera con incrementos: cada incremento se aplica antes del lock o se rechaza', async () => {
