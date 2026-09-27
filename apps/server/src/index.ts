@@ -10,6 +10,7 @@ const app = createApp({
   redis,
   instanceId: config.INSTANCE_ID,
   tokenSecret: config.TOKEN_SECRET,
+  trustProxy: config.TRUST_PROXY,
 });
 
 const server = app.listen(config.PORT, () => {

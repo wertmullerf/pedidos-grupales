@@ -2,9 +2,11 @@ import { pathToFileURL } from 'node:url';
 import type pg from 'pg';
 import { config } from '../config.js';
 import { createPool } from './pool.js';
+import { withTransaction } from './tx.js';
+import { uuidV5 } from './uuid.js';
 
-// Datos 100% inventados. Los IDs se derivan de md5(clave) para que el seed sea idempotente:
-// correrlo de nuevo actualiza las filas en lugar de duplicarlas o romper pedidos existentes.
+// Datos 100% inventados. Los IDs son UUID v5 derivados de una clave estable (slug, nombre), así el
+// seed es idempotente: correrlo de nuevo actualiza las filas en lugar de duplicarlas.
 
 interface SeedMenuItem {
   category: string;
@@ -116,48 +118,48 @@ export const SEED_TENANTS: SeedTenant[] = [
 ];
 
 export async function seed(pool: pg.Pool): Promise<void> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(pool, async (client) => {
     for (const t of SEED_TENANTS) {
-      const { rows } = await client.query<{ id: string }>(
+      const tenantId = uuidV5(`tenant:${t.slug}`);
+      await client.query(
         `INSERT INTO tenants (id, slug, name, primary_color, logo_url)
-         VALUES (md5($1)::uuid, $1, $2, $3, $4)
-         ON CONFLICT (slug) DO UPDATE
-           SET name = EXCLUDED.name, primary_color = EXCLUDED.primary_color, logo_url = EXCLUDED.logo_url
-         RETURNING id`,
-        [t.slug, t.name, t.primaryColor, t.logoUrl],
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE
+           SET slug = EXCLUDED.slug, name = EXCLUDED.name,
+               primary_color = EXCLUDED.primary_color, logo_url = EXCLUDED.logo_url`,
+        [tenantId, t.slug, t.name, t.primaryColor, t.logoUrl],
       );
-      const tenantId = rows[0]!.id;
 
       for (const b of t.branches) {
         await client.query(
           `INSERT INTO branches (id, tenant_id, name, address, is_open)
-           VALUES (md5($1::text || ':branch:' || $2)::uuid, $1::uuid, $2, $3, $4)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (id) DO UPDATE
              SET address = EXCLUDED.address, is_open = EXCLUDED.is_open`,
-          [tenantId, b.name, b.address, b.isOpen],
+          [uuidV5(`branch:${t.slug}:${b.name}`), tenantId, b.name, b.address, b.isOpen],
         );
       }
 
       for (const m of t.menu) {
         await client.query(
           `INSERT INTO menu_items (id, tenant_id, category, name, description, price_cents, available)
-           VALUES (md5($1::text || ':menu:' || $3)::uuid, $1::uuid, $2, $3, $4, $5, $6)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (id) DO UPDATE
              SET category = EXCLUDED.category, description = EXCLUDED.description,
                  price_cents = EXCLUDED.price_cents, available = EXCLUDED.available`,
-          [tenantId, m.category, m.name, m.description, m.price * 100, m.available ?? true],
+          [
+            uuidV5(`menu:${t.slug}:${m.name}`),
+            tenantId,
+            m.category,
+            m.name,
+            m.description,
+            m.price * 100,
+            m.available ?? true,
+          ],
         );
       }
     }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

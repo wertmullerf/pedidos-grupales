@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { verifyToken } from '../src/auth/token.js';
+import { signToken, TOKEN_TTL_SECONDS, verifyToken } from '../src/auth/token.js';
 import { PARTICIPANT_COLORS } from '../src/orders/order-repo.js';
 import { TEST_TOKEN_SECRET, useTestApp } from './helpers.js';
+
+type Slug = 'brasaburg' | 'smashlab';
 
 interface BranchDto {
   id: string;
@@ -11,10 +13,16 @@ interface BranchDto {
   isOpen: boolean;
 }
 
+interface Created {
+  code: string;
+  token: string;
+  participant: { id: string; name: string; color: string };
+}
+
 describe('API REST del pedido', () => {
   const ctx = useTestApp();
   const api = () => request(ctx.app);
-  const branches: Record<'brasaburg' | 'smashlab', BranchDto[]> = { brasaburg: [], smashlab: [] };
+  const branches: Record<Slug, BranchDto[]> = { brasaburg: [], smashlab: [] };
   let tenantIds: Record<string, string>;
 
   beforeAll(async () => {
@@ -27,15 +35,20 @@ describe('API REST del pedido', () => {
     tenantIds = Object.fromEntries(rows.map((r) => [r.slug, r.id]));
   });
 
-  const openBranch = (slug: 'brasaburg' | 'smashlab') => branches[slug].find((b) => b.isOpen)!;
+  const openBranch = (slug: Slug) => branches[slug].find((b) => b.isOpen)!;
 
-  async function createOrder(slug: 'brasaburg' | 'smashlab' = 'brasaburg', name = 'Ana') {
+  async function createOrder(slug: Slug = 'brasaburg', name = 'Ana'): Promise<Created> {
     const res = await api()
       .post(`/api/t/${slug}/orders`)
       .send({ branchId: openBranch(slug).id, name });
     expect(res.status).toBe(201);
-    return res.body as { code: string; token: string; participant: { id: string } };
+    return res.body;
   }
+
+  const snapshot = (slug: Slug, code: string, token?: string) => {
+    const req = api().get(`/api/t/${slug}/orders/${code}/snapshot`);
+    return token ? req.set('Authorization', `Bearer ${token}`) : req;
+  };
 
   describe('catálogo', () => {
     it('devuelve datos y branding de la cadena', async () => {
@@ -56,9 +69,7 @@ describe('API REST del pedido', () => {
     });
 
     it('cada cadena ve solo sus sucursales y su menú', async () => {
-      expect(branches.brasaburg.map((b) => b.name).every((n) => n.startsWith('Brasaburg'))).toBe(
-        true,
-      );
+      expect(branches.brasaburg.every((b) => b.name.startsWith('Brasaburg'))).toBe(true);
       const a = (await api().get('/api/t/brasaburg/menu')).body as { id: string }[];
       const b = (await api().get('/api/t/smashlab/menu')).body as { id: string }[];
       expect(a).toHaveLength(7);
@@ -72,9 +83,7 @@ describe('API REST del pedido', () => {
       const { code, token, participant } = await createOrder('brasaburg', 'Ana');
       expect(code).toMatch(/^[A-Z2-9]{6}$/);
       expect(participant).toMatchObject({ name: 'Ana', color: PARTICIPANT_COLORS[0] });
-
-      const payload = verifyToken(token, TEST_TOKEN_SECRET);
-      expect(payload).toMatchObject({
+      expect(verifyToken(token, TEST_TOKEN_SECRET)).toMatchObject({
         tenantId: tenantIds.brasaburg,
         participantId: participant.id,
       });
@@ -106,6 +115,28 @@ describe('API REST del pedido', () => {
     });
   });
 
+  describe('preview público', () => {
+    it('muestra solo cadena, sucursal, host, cantidad de participantes y status', async () => {
+      const host = await createOrder('brasaburg', 'Ana');
+      await api().post(`/api/t/brasaburg/orders/${host.code}/join`).send({ name: 'Beto' });
+
+      const res = await api().get(`/api/t/brasaburg/orders/${host.code.toLowerCase()}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        tenant: { slug: 'brasaburg', name: 'Brasaburg' },
+        branch: { name: openBranch('brasaburg').name, address: expect.any(String) },
+        hostName: 'Ana',
+        participantCount: 2,
+        status: 'open',
+      });
+    });
+
+    it('404 para un código inexistente o mal formado', async () => {
+      expect((await api().get('/api/t/brasaburg/orders/ZZZZZZ')).status).toBe(404);
+      expect((await api().get('/api/t/brasaburg/orders/abc')).status).toBe(404);
+    });
+  });
+
   describe('unirse y snapshot', () => {
     it('suma participantes con colores distintos y sube la versión', async () => {
       const host = await createOrder('brasaburg', 'Ana');
@@ -115,40 +146,41 @@ describe('API REST del pedido', () => {
         .send({ name: 'Beto' });
       expect(join.status).toBe(201);
       expect(join.body.participant).toMatchObject({ name: 'Beto', color: PARTICIPANT_COLORS[1] });
-      expect(verifyToken(join.body.token, TEST_TOKEN_SECRET)).toMatchObject({
-        participantId: join.body.participant.id,
-      });
 
-      const snap = await api().get(`/api/t/brasaburg/orders/${host.code}`);
-      expect(snap.status).toBe(200);
-      expect(snap.body).toMatchObject({
-        order: {
-          code: host.code,
-          status: 'open',
-          version: 1,
-          hostParticipantId: host.participant.id,
-        },
-        branch: { id: openBranch('brasaburg').id },
-        items: [],
-        totalCents: 0,
-      });
-      expect(snap.body.participants.map((p: { name: string }) => p.name)).toEqual(['Ana', 'Beto']);
+      // Cualquier participante del pedido puede ver el snapshot completo.
+      for (const token of [host.token, join.body.token]) {
+        const snap = await snapshot('brasaburg', host.code, token);
+        expect(snap.status).toBe(200);
+        expect(snap.body).toMatchObject({
+          order: {
+            code: host.code,
+            status: 'open',
+            version: 1,
+            hostParticipantId: host.participant.id,
+          },
+          branch: { id: openBranch('brasaburg').id },
+          items: [],
+          totalCents: 0,
+        });
+        expect(snap.body.participants.map((p: { name: string }) => p.name)).toEqual([
+          'Ana',
+          'Beto',
+        ]);
+      }
     });
 
     it('unirse dos veces con el mismo clientOpId crea un solo participante', async () => {
-      const { code } = await createOrder();
+      const host = await createOrder();
       const clientOpId = randomUUID();
-      const first = await api()
-        .post(`/api/t/brasaburg/orders/${code}/join`)
-        .send({ name: 'Cata', clientOpId });
-      const second = await api()
-        .post(`/api/t/brasaburg/orders/${code}/join`)
-        .send({ name: 'Cata', clientOpId });
+      const join = () =>
+        api().post(`/api/t/brasaburg/orders/${host.code}/join`).send({ name: 'Cata', clientOpId });
+      const first = await join();
+      const second = await join();
 
       expect(second.status).toBe(201);
       expect(second.body.participant).toEqual(first.body.participant);
 
-      const snap = await api().get(`/api/t/brasaburg/orders/${code}`);
+      const snap = await snapshot('brasaburg', host.code, host.token);
       expect(snap.body.participants).toHaveLength(2);
       expect(snap.body.order.version).toBe(1);
     });
@@ -160,30 +192,104 @@ describe('API REST del pedido', () => {
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe('ORDER_LOCKED');
     });
+  });
 
-    it('404 para un código inexistente o mal formado', async () => {
-      expect((await api().get('/api/t/brasaburg/orders/ZZZZZZ')).status).toBe(404);
-      expect((await api().get('/api/t/brasaburg/orders/abc')).status).toBe(404);
+  describe('snapshot completo: autenticación', () => {
+    it('401 sin token o con token inválido', async () => {
+      const { code } = await createOrder();
+      expect((await snapshot('brasaburg', code)).status).toBe(401);
+      expect((await snapshot('brasaburg', code, 'basura.basura')).status).toBe(401);
+    });
+
+    it('401 con token vencido', async () => {
+      const host = await createOrder();
+      const payload = verifyToken(host.token, TEST_TOKEN_SECRET)!;
+      const expired = signToken(payload, TEST_TOKEN_SECRET, {
+        now: Math.floor(Date.now() / 1000) - TOKEN_TTL_SECONDS - 1,
+      });
+      const res = await snapshot('brasaburg', host.code, expired);
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('UNAUTHORIZED');
+    });
+
+    it('403 con el token de otro pedido de la misma cadena', async () => {
+      const a = await createOrder();
+      const b = await createOrder();
+      const res = await snapshot('brasaburg', a.code, b.token);
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
     });
   });
 
   describe('aislamiento multi-tenant', () => {
     it('el código de un pedido de la cadena A da 404 desde la cadena B', async () => {
-      const { code } = await createOrder('brasaburg');
+      const host = await createOrder('brasaburg');
 
-      const snap = await api().get(`/api/t/smashlab/orders/${code}`);
-      expect(snap.status).toBe(404);
-      expect(snap.body.error.code).toBe('ORDER_NOT_FOUND');
+      const preview = await api().get(`/api/t/smashlab/orders/${host.code}`);
+      expect(preview.status).toBe(404);
+      expect(preview.body.error.code).toBe('ORDER_NOT_FOUND');
 
       const join = await api()
-        .post(`/api/t/smashlab/orders/${code}/join`)
+        .post(`/api/t/smashlab/orders/${host.code}/join`)
         .send({ name: 'Intruso' });
       expect(join.status).toBe(404);
 
       // Y el pedido original sigue intacto.
-      const original = await api().get(`/api/t/brasaburg/orders/${code}`);
+      const original = await snapshot('brasaburg', host.code, host.token);
       expect(original.body.participants).toHaveLength(1);
       expect(original.body.order.version).toBe(0);
     });
+
+    it('un token de la cadena A es rechazado en la cadena B', async () => {
+      const a = await createOrder('brasaburg');
+      const b = await createOrder('smashlab');
+      const res = await snapshot('smashlab', b.code, a.token);
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+    });
+  });
+});
+
+describe('rate limit (Redis, compartido entre instancias)', () => {
+  const rules = {
+    preview: { limit: 3, windowSeconds: 60 },
+    join: { limit: 2, windowSeconds: 60 },
+  };
+  const keyPrefix = `test-rl:${randomUUID()}`;
+  // Dos apps independientes que comparten Redis simulan dos instancias detrás de nginx.
+  const instanceA = useTestApp({ rateLimits: { ...rules, keyPrefix } });
+  const instanceB = useTestApp({ rateLimits: { ...rules, keyPrefix } });
+
+  it('responde 429 al superar el límite de preview, contando entre instancias', async () => {
+    const ip = `203.0.113.${Math.floor(Math.random() * 250) + 1}`;
+    const get = (app: typeof instanceA.app) =>
+      request(app).get('/api/t/brasaburg/orders/ZZZZZZ').set('X-Forwarded-For', ip);
+
+    expect((await get(instanceA.app)).status).toBe(404);
+    expect((await get(instanceB.app)).status).toBe(404);
+    expect((await get(instanceA.app)).status).toBe(404);
+
+    const limited = await get(instanceB.app);
+    expect(limited.status).toBe(429);
+    expect(limited.body.error.code).toBe('RATE_LIMITED');
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+
+    // Otra IP no se ve afectada.
+    const other = await request(instanceA.app)
+      .get('/api/t/brasaburg/orders/ZZZZZZ')
+      .set('X-Forwarded-For', '198.51.100.7');
+    expect(other.status).toBe(404);
+  });
+
+  it('responde 429 al superar el límite de join', async () => {
+    const ip = '192.0.2.44';
+    const join = () =>
+      request(instanceA.app)
+        .post('/api/t/brasaburg/orders/ZZZZZZ/join')
+        .set('X-Forwarded-For', ip)
+        .send({ name: 'Bot' });
+    expect((await join()).status).toBe(404);
+    expect((await join()).status).toBe(404);
+    expect((await join()).status).toBe(429);
   });
 });

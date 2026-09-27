@@ -10,6 +10,8 @@ x-server: &server
     REDIS_URL: redis://redis:6379
     # Compartido por todas las instancias: un token firmado en una se valida en la otra.
     TOKEN_SECRET: ${TOKEN_SECRET:-local-compose-token-secret}
+    # Solo nginx es proxy confiable: req.ip = IP que ve nginx, sin aceptar X-Forwarded-For del cliente.
+    TRUST_PROXY: '1'
   depends_on:
     migrate:
       condition: service_completed_successfully

@@ -12,6 +12,8 @@ const Env = z
     INSTANCE_ID: z.string().default('local'),
     // Firma los tokens de participante. Todas las instancias deben compartir el mismo valor.
     TOKEN_SECRET: z.string().min(16).default(DEV_TOKEN_SECRET),
+    // Proxies confiables para calcular la IP real (rate limit). Detrás de nginx: '1' (un salto).
+    TRUST_PROXY: z.string().default('loopback'),
   })
   .refine((env) => env.NODE_ENV !== 'production' || env.TOKEN_SECRET !== DEV_TOKEN_SECRET, {
     message: 'TOKEN_SECRET es obligatorio en producción',

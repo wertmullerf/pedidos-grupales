@@ -33,7 +33,7 @@ export interface OrderSnapshot {
   order: {
     id: string;
     code: string;
-    status: 'open' | 'locked' | 'submitted';
+    status: OrderStatus;
     version: number;
     hostParticipantId: string;
     createdAt: string;
@@ -53,11 +53,24 @@ export interface OrderSnapshot {
   totalCents: number;
 }
 
+/** Vista pública de un pedido: alcanza para la pantalla de "unirse", sin exponer ítems ni nombres. */
+export interface OrderPreview {
+  tenant: { slug: string; name: string };
+  branch: { name: string; address: string };
+  hostName: string;
+  participantCount: number;
+  status: OrderStatus;
+}
+
+export type OrderStatus = 'open' | 'locked' | 'submitted';
+
 export function generateCode(): string {
   let code = '';
   for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
   return code;
 }
+
+export const MAX_CODE_ATTEMPTS = 5;
 
 /**
  * Acceso a pedidos de UNA cadena: todas las queries filtran por el tenantId del constructor,
@@ -67,14 +80,19 @@ export class OrderRepo {
   constructor(
     private readonly pool: pg.Pool,
     private readonly tenantId: string,
+    // Inyectable para poder testear el reintento ante colisión de códigos.
+    private readonly nextCode: () => string = generateCode,
   ) {}
 
-  /** Crea el pedido y su participante host. Rechaza sucursales de otra cadena o cerradas (regla 13). */
+  /**
+   * Crea el pedido y su participante host. Rechaza sucursales de otra cadena o cerradas (regla 13).
+   * Si el código choca con el UNIQUE (tenant_id, code), reintenta con uno nuevo.
+   */
   async createOrder(branchId: string, hostName: string): Promise<JoinResult & { code: string }> {
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
       const orderId = randomUUID();
       const host: Participant = { id: randomUUID(), name: hostName, color: PARTICIPANT_COLORS[0]! };
-      const code = generateCode();
+      const code = this.nextCode();
       try {
         return await withTransaction(this.pool, async (client) => {
           // La validación de sucursal va en el mismo INSERT: 0 filas = no existe, es de otra cadena o está cerrada.
@@ -151,8 +169,30 @@ export class OrderRepo {
     return outcome;
   }
 
-  /** Snapshot consistente en una sola query (un único statement ve un único estado). */
-  async getSnapshot(code: string): Promise<OrderSnapshot> {
+  async getPreview(code: string): Promise<OrderPreview> {
+    const { rows } = await this.pool.query<OrderPreview>(
+      `SELECT json_build_object('slug', t.slug, 'name', t.name) AS tenant,
+              json_build_object('name', b.name, 'address', b.address) AS branch,
+              h.name AS "hostName",
+              (SELECT count(*)::int FROM participants p WHERE p.order_id = o.id) AS "participantCount",
+              o.status
+       FROM group_orders o
+       JOIN tenants t ON t.id = o.tenant_id
+       JOIN branches b ON b.id = o.branch_id AND b.tenant_id = o.tenant_id
+       JOIN participants h ON h.id = o.host_participant_id AND h.order_id = o.id
+       WHERE o.tenant_id = $1 AND o.code = $2`,
+      [this.tenantId, code],
+    );
+    const row = rows[0];
+    if (!row) throw orderNotFound();
+    return row;
+  }
+
+  /**
+   * Snapshot completo, solo para participantes: se filtra también por el pedido del token.
+   * Es consistente porque sale de una sola query (un único statement ve un único estado).
+   */
+  async getSnapshot(code: string, tokenOrderId: string): Promise<OrderSnapshot> {
     const { rows } = await this.pool.query<{ snapshot: OrderSnapshot }>(
       `SELECT json_build_object(
          'order', json_build_object(
@@ -179,11 +219,11 @@ export class OrderRepo {
        ) AS snapshot
        FROM group_orders o
        JOIN branches b ON b.id = o.branch_id AND b.tenant_id = o.tenant_id
-       WHERE o.tenant_id = $1 AND o.code = $2`,
-      [this.tenantId, code],
+       WHERE o.tenant_id = $1 AND o.code = $2 AND o.id = $3`,
+      [this.tenantId, code, tokenOrderId],
     );
     const row = rows[0];
-    if (!row) throw orderNotFound();
+    if (!row) throw await this.snapshotRejection(code);
     return row.snapshot;
   }
 
@@ -201,6 +241,17 @@ export class OrderRepo {
     if (!row)
       throw new AppError(409, 'CLIENT_OP_CONFLICT', 'clientOpId ya usado en otra operación');
     return row;
+  }
+
+  /** El código existe pero el token es de otro pedido => 403; si no existe => 404. */
+  private async snapshotRejection(code: string): Promise<AppError> {
+    const { rowCount } = await this.pool.query(
+      `SELECT 1 FROM group_orders WHERE tenant_id = $1 AND code = $2`,
+      [this.tenantId, code],
+    );
+    return rowCount
+      ? new AppError(403, 'FORBIDDEN', 'El token no pertenece a este pedido')
+      : orderNotFound();
   }
 
   private async orderRejection(code: string): Promise<AppError> {
