@@ -1,14 +1,17 @@
 import express from 'express';
 import type pg from 'pg';
+import { apiRouter } from './http/api.js';
+import { errorHandler } from './http/errors.js';
 import type { RedisClient } from './redis.js';
 
 export interface AppDeps {
   pool: pg.Pool;
   redis: RedisClient;
   instanceId: string;
+  tokenSecret: string;
 }
 
-export function createApp({ pool, redis, instanceId }: AppDeps) {
+export function createApp({ pool, redis, instanceId, tokenSecret }: AppDeps) {
   const app = express();
   app.use(express.json());
 
@@ -22,6 +25,9 @@ export function createApp({ pool, redis, instanceId }: AppDeps) {
       redis: cache.status === 'fulfilled' ? 'ok' : 'down',
     });
   });
+
+  app.use('/api', apiRouter(pool, tokenSecret));
+  app.use(errorHandler);
 
   return app;
 }

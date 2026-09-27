@@ -5,7 +5,12 @@ import { connectRedis } from './redis.js';
 
 const pool = createPool(config.DATABASE_URL);
 const redis = await connectRedis(config.REDIS_URL);
-const app = createApp({ pool, redis, instanceId: config.INSTANCE_ID });
+const app = createApp({
+  pool,
+  redis,
+  instanceId: config.INSTANCE_ID,
+  tokenSecret: config.TOKEN_SECRET,
+});
 
 const server = app.listen(config.PORT, () => {
   console.log(`[${config.INSTANCE_ID}] escuchando en :${config.PORT}`);
