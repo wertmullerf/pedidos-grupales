@@ -63,12 +63,16 @@ services:
     environment:
       <<: *server-env
       INSTANCE_ID: server-1
+    ports:
+      - '3001:3000' # acceso directo, sin nginx (para probar el Redis adapter)
 
   server-2:
     <<: *server
     environment:
       <<: *server-env
       INSTANCE_ID: server-2
+    ports:
+      - '3002:3000'
 
   nginx:
     image: nginx:alpine

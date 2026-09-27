@@ -12,6 +12,7 @@ export interface AppDeps {
   rateLimits?: ApiDeps['rateLimits'];
   /** Valor de `trust proxy` de Express, para que req.ip sea la IP real detrás de nginx. */
   trustProxy?: string;
+  publish?: ApiDeps['publish'];
 }
 
 export function createApp({
@@ -21,6 +22,7 @@ export function createApp({
   tokenSecret,
   rateLimits = DEFAULT_RATE_LIMITS,
   trustProxy = 'loopback',
+  publish,
 }: AppDeps) {
   const app = express();
   // Un número es cantidad de saltos ('1' = solo nginx); otro valor es una lista de IPs/subredes.
@@ -38,7 +40,7 @@ export function createApp({
     });
   });
 
-  app.use('/api', apiRouter({ pool, redis, tokenSecret, rateLimits }));
+  app.use('/api', apiRouter({ pool, redis, tokenSecret, rateLimits, publish }));
   app.use(errorHandler);
 
   return app;

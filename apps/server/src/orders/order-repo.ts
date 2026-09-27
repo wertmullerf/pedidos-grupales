@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { isUniqueViolation, Rollback, withTransaction } from '../db/tx.js';
 import { AppError } from '../http/errors.js';
+import type { OrderEvent } from './events.js';
 
 // Sin 0/O ni 1/I para que el código se pueda dictar sin confusiones.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -27,6 +28,8 @@ export interface Participant {
 export interface JoinResult {
   orderId: string;
   participant: Participant;
+  /** Solo si se aplicó en esta llamada (no en un reintento idempotente): hay que emitirlo a la sala. */
+  event?: OrderEvent;
 }
 
 export interface OrderSnapshot {
@@ -161,7 +164,14 @@ export class OrderRepo {
         `INSERT INTO participants (id, order_id, name, color) VALUES ($1, $2, $3, $4)`,
         [participant.id, order.id, participant.name, participant.color],
       );
-      return { orderId: order.id, participant };
+      const joined: OrderEvent = {
+        orderId: order.id,
+        version: order.version,
+        clientOpId,
+        type: 'participant_joined',
+        payload: { participant },
+      };
+      return { orderId: order.id, participant, event: joined };
     });
 
     if (outcome === 'duplicate') return this.replayJoin(code, clientOpId);
@@ -193,6 +203,50 @@ export class OrderRepo {
    * Es consistente porque sale de una sola query (un único statement ve un único estado).
    */
   async getSnapshot(code: string, tokenOrderId: string): Promise<OrderSnapshot> {
+    const snapshot = await this.querySnapshot('AND o.code = $2 AND o.id = $3', [
+      code,
+      tokenOrderId,
+    ]);
+    if (!snapshot) throw await this.snapshotRejection(code);
+    return snapshot;
+  }
+
+  /** Para el resync por socket: el orderId ya viene de un token verificado. */
+  async getSnapshotById(orderId: string): Promise<OrderSnapshot> {
+    const snapshot = await this.querySnapshot('AND o.id = $2', [orderId]);
+    if (!snapshot) throw orderNotFound();
+    return snapshot;
+  }
+
+  /**
+   * Eventos posteriores a `sinceVersion`, en orden. Si son más que `limit` devuelve null:
+   * el hueco es grande y conviene mandar un snapshot (regla 7).
+   */
+  async getEventsSince(
+    orderId: string,
+    sinceVersion: number,
+    limit: number,
+  ): Promise<OrderEvent[] | null> {
+    const { rows } = await this.pool.query<OrderEvent>(
+      `SELECT e.order_id AS "orderId", e.version, e.client_op_id AS "clientOpId", e.type, e.payload
+       FROM order_events e JOIN group_orders o ON o.id = e.order_id
+       WHERE e.order_id = $1 AND o.tenant_id = $2 AND e.version > $3
+       ORDER BY e.version
+       LIMIT $4`,
+      [orderId, this.tenantId, sinceVersion, limit + 1],
+    );
+    return rows.length > limit ? null : rows;
+  }
+
+  async getVersion(orderId: string): Promise<number | null> {
+    const { rows } = await this.pool.query<{ version: number }>(
+      'SELECT version FROM group_orders WHERE id = $1 AND tenant_id = $2',
+      [orderId, this.tenantId],
+    );
+    return rows[0]?.version ?? null;
+  }
+
+  private async querySnapshot(filter: string, params: unknown[]): Promise<OrderSnapshot | null> {
     const { rows } = await this.pool.query<{ snapshot: OrderSnapshot }>(
       `SELECT json_build_object(
          'order', json_build_object(
@@ -219,12 +273,10 @@ export class OrderRepo {
        ) AS snapshot
        FROM group_orders o
        JOIN branches b ON b.id = o.branch_id AND b.tenant_id = o.tenant_id
-       WHERE o.tenant_id = $1 AND o.code = $2 AND o.id = $3`,
-      [this.tenantId, code, tokenOrderId],
+       WHERE o.tenant_id = $1 ${filter}`,
+      [this.tenantId, ...params],
     );
-    const row = rows[0];
-    if (!row) throw await this.snapshotRejection(code);
-    return row.snapshot;
+    return rows[0]?.snapshot ?? null;
   }
 
   // --- Caminos de error: solo se consultan después de un rechazo, no en el camino feliz. ---

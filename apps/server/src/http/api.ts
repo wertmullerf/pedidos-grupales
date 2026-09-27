@@ -4,6 +4,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { signToken } from '../auth/token.js';
 import { CODE_LENGTH, orderNotFound } from '../orders/order-repo.js';
+import type { Publisher } from '../realtime/realtime.js';
 import type { RedisClient } from '../redis.js';
 import { requireParticipant } from './auth.js';
 import { rateLimit, type RateLimitRule } from './rate-limit.js';
@@ -14,6 +15,8 @@ export interface ApiDeps {
   redis: RedisClient;
   tokenSecret: string;
   rateLimits: { preview: RateLimitRule; join: RateLimitRule; keyPrefix?: string };
+  /** Emite a la sala del pedido (tiempo real). Opcional para poder usar la API sin sockets. */
+  publish?: Publisher;
 }
 
 export const DEFAULT_RATE_LIMITS: ApiDeps['rateLimits'] = {
@@ -33,7 +36,7 @@ function parseCode(raw: unknown): string {
   return code;
 }
 
-export function apiRouter({ pool, redis, tokenSecret, rateLimits }: ApiDeps): Router {
+export function apiRouter({ pool, redis, tokenSecret, rateLimits, publish }: ApiDeps): Router {
   const limitPreview = rateLimit(redis, 'preview', rateLimits.preview, rateLimits.keyPrefix);
   const limitJoin = rateLimit(redis, 'join', rateLimits.join, rateLimits.keyPrefix);
   const tenantRouter = Router({ mergeParams: true });
@@ -67,11 +70,13 @@ export function apiRouter({ pool, redis, tokenSecret, rateLimits }: ApiDeps): Ro
   tenantRouter.post('/orders/:code/join', limitJoin, async (req, res) => {
     const code = parseCode(req.params.code);
     const body = JoinBody.parse(req.body);
-    const { orderId, participant } = await res.locals.orders.joinOrder(
+    const { orderId, participant, event } = await res.locals.orders.joinOrder(
       code,
       body.name,
       body.clientOpId ?? randomUUID(),
     );
+    // Después del COMMIT: los que ya están en el pedido ven llegar al nuevo participante.
+    if (event) publish?.(res.locals.tenant.id, event);
     const token = signToken(
       { tenantId: res.locals.tenant.id, orderId, participantId: participant.id },
       tokenSecret,

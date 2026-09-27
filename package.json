@@ -4,7 +4,8 @@
   "type": "module",
   "workspaces": [
     "apps/server",
-    "apps/web"
+    "apps/web",
+    "packages/client"
   ],
   "scripts": {
     "dev:server": "npm run dev -w apps/server",

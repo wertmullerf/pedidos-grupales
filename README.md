@@ -64,3 +64,35 @@ Detrás de nginx en round-robin, sin sticky sessions, esas requests caerían en 
 el handshake fallaría. Una conexión WebSocket es una única conexión TCP que queda fija en una
 instancia, así que no hace falta afinidad. Los mensajes entre instancias los reparte el adapter de
 Redis.
+
+### Salas por cadena y pedido
+
+Cada pedido tiene su sala `tenant:{tenantId}:order:{orderId}`. El cliente **no elige** a qué sala
+entra: la sala se deriva del token, verificado en el handshake contra la cadena de la URL. Un token
+de otra cadena se rechaza antes de conectar.
+
+### Emitir solo después del COMMIT, sin reintentos
+
+El evento se emite a la sala recién después de que la transacción hizo `COMMIT`, así nadie ve un
+cambio que después se deshace. Si el emit falla, **no se reintenta**. Cada evento lleva su
+`version` y el cliente los aplica estrictamente en orden. Si recibe la versión 7 estando en la 5,
+sabe que se perdió algo y pide un resync en lugar de aplicarlo a ciegas. Lo mismo al reconectar:
+pide los eventos desde la última versión vista, o recibe un snapshot completo si el hueco es grande.
+El log `order_events` es la fuente para resincronizar, no la entrega de Socket.IO.
+
+Las respuestas de error (`ORDER_LOCKED`, `NOT_OWNER`, …) incluyen la versión actual del pedido: si
+es mayor que la local, el cliente sabe que le falta algo y resincroniza.
+
+### Presencia efímera
+
+"Conectado" y "está eligiendo…" viven solo en los sockets y se comparten entre instancias por el
+adapter de Redis. **Nunca** se escriben en Postgres ni suben la `version` del pedido: son datos
+que pierden sentido a los segundos y no deben ensuciar el log de eventos.
+
+### Rate limit por conexión
+
+Cada conexión tiene un token bucket en memoria. Como una conexión WebSocket está fija en una
+instancia, no hace falta compartir ese contador. Los eventos que exceden el límite se descartan y
+se responden con `RATE_LIMITED`. Esa respuesta no consulta la versión, para no cargar la base
+justo cuando alguien está inundando. Los endpoints HTTP públicos (preview y unirse) sí tienen un
+rate limit por IP compartido en Redis, porque cada request puede caer en otra instancia.
