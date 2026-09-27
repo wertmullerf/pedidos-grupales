@@ -1,13 +1,17 @@
-import { io, type Socket } from 'socket.io-client';
-import { OrderStore } from './order-store.js';
 import type {
+  ClientToServerEvents,
   CommandAck,
+  CommandInput,
   CommandName,
   ErrorAck,
+  HandshakeAuth,
   OrderEvent,
   PresenceState,
   ResyncAck,
-} from './types.js';
+  ServerToClientEvents,
+} from '@pedido/shared';
+import { io, type Socket } from 'socket.io-client';
+import { OrderStore } from './order-store.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'resynced';
 
@@ -31,7 +35,7 @@ export class ConnectionError extends Error {
  */
 export class OrderConnection {
   readonly store = new OrderStore();
-  readonly socket: Socket;
+  readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>;
   presence: PresenceState = { participants: [] };
   status: ConnectionStatus = 'connecting';
   readonly stats = { resyncs: 0, lastResyncMode: null as 'events' | 'snapshot' | null };
@@ -47,7 +51,7 @@ export class OrderConnection {
     this.socket = io(opts.url, {
       // Solo WebSocket: funciona detrás de nginx round-robin sin sticky sessions.
       transports: ['websocket'],
-      auth: { tenantSlug: opts.tenantSlug, token: opts.token },
+      auth: { tenantSlug: opts.tenantSlug, token: opts.token } satisfies HandshakeAuth,
       autoConnect: false,
       reconnectionDelay: 300,
       reconnectionDelayMax: 3000,
@@ -65,7 +69,7 @@ export class OrderConnection {
       );
     });
     this.socket.on('disconnect', () => this.setStatus('reconnecting'));
-    this.socket.on('order:event', (event: OrderEvent) => this.handleEvent(event));
+    this.socket.on('order:event', (event) => this.handleEvent(event));
     this.socket.on('presence:state', (presence: PresenceState) => {
       this.presence = presence;
       this.notify();
@@ -98,10 +102,11 @@ export class OrderConnection {
   }
 
   /** Envía un comando y espera la confirmación del server. */
-  async send(command: CommandName, payload: Record<string, unknown>): Promise<CommandAck> {
-    const ack = (await this.socket
+  async send<C extends CommandName>(command: C, payload: CommandInput<C>): Promise<CommandAck> {
+    const ack: CommandAck = await this.socket
       .timeout(this.ackTimeoutMs)
-      .emitWithAck(command, payload)) as CommandAck;
+      // Todos los comandos comparten la firma (payload, ack); el genérico solo tipa el payload.
+      .emitWithAck(command as CommandName, payload);
     if (ack.ok) this.handleEvent(ack.event);
     else this.handleErrorVersion(ack);
     return ack;
@@ -143,9 +148,9 @@ export class OrderConnection {
       try {
         do {
           this.resyncAgain = false;
-          const ack = (await this.socket
+          const ack: ResyncAck = await this.socket
             .timeout(this.ackTimeoutMs)
-            .emitWithAck('order:resync', { sinceVersion: this.store.version })) as ResyncAck;
+            .emitWithAck('order:resync', { sinceVersion: this.store.version });
           if (!ack.ok) throw new ConnectionError(ack.error.code);
           this.stats.resyncs++;
           this.stats.lastResyncMode = ack.mode;

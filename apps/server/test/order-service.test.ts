@@ -5,6 +5,7 @@ import { config } from '../src/config.js';
 import { createPool } from '../src/db/pool.js';
 import { OrderRepo } from '../src/orders/order-repo.js';
 import { OrderService } from '../src/orders/order-service.js';
+import { addedItemId } from './helpers.js';
 
 const op = () => ({ clientOpId: randomUUID() });
 
@@ -73,7 +74,7 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
       menuItemId: menu['Brasa Clásica']!.id,
       quantity,
     });
-    return (res.event.payload.item as { id: string }).id;
+    return addedItemId(res.event);
   }
 
   describe('agregar ítems', () => {
@@ -116,6 +117,24 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
 
       const snap = await snapshot(code, orderId);
       expect(snap.items.map((i) => i.notes)).toEqual(['', 'sin cebolla']);
+    });
+
+    it('acepta el id de línea propuesto por el cliente y rechaza uno repetido', async () => {
+      const { code, orderId, host, guest } = await setupOrder();
+      const itemId = randomUUID();
+      const res = await service.addItem(host, {
+        ...op(),
+        itemId,
+        menuItemId: menu['Gaseosa']!.id,
+      });
+      expect(addedItemId(res.event)).toBe(itemId);
+
+      await expect(
+        service.addItem(guest, { ...op(), itemId, menuItemId: menu['Gaseosa']!.id }),
+      ).rejects.toMatchObject({ code: 'ITEM_ID_CONFLICT', status: 409 });
+      const snap = await snapshot(code, orderId);
+      expect(snap.items.map((i) => i.id)).toEqual([itemId]);
+      expect(snap.order.version).toBe(2); // el intento rechazado no dejó rastro
     });
 
     it('el precio queda congelado aunque cambie el menú', async () => {
@@ -323,10 +342,9 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
     it('reusar un clientOpId para otra operación es un conflicto', async () => {
       const { host } = await setupOrder();
       const clientOpId = randomUUID();
-      const itemId = (await service.addItem(host, { clientOpId, menuItemId: menu['Gaseosa']!.id }))
-        .event.payload.item as { id: string };
+      const added = await service.addItem(host, { clientOpId, menuItemId: menu['Gaseosa']!.id });
       await expect(
-        service.removeItem(host, { clientOpId, itemId: itemId.id }),
+        service.removeItem(host, { clientOpId, itemId: addedItemId(added.event) }),
       ).rejects.toMatchObject({ code: 'CLIENT_OP_CONFLICT' });
     });
 

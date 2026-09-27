@@ -1,19 +1,32 @@
 import type { Server as HttpServer } from 'node:http';
+import {
+  ChoosingSchema,
+  COMMAND_NAMES,
+  ResyncRequestSchema,
+  type ApiError,
+  type ClientToServerEvents,
+  type CommandAck,
+  type CommandName,
+  type ErrorAck,
+  type OrderEvent,
+  type ServerToClientEvents,
+} from '@pedido/shared';
 import { createAdapter } from '@socket.io/redis-adapter';
 import type pg from 'pg';
 import { Server, type Socket } from 'socket.io';
 import { z, ZodError } from 'zod';
 import { authenticateParticipant } from '../http/auth.js';
 import { AppError } from '../http/errors.js';
-import type { OrderEvent } from '../orders/events.js';
-import { OrderRepo, type OrderSnapshot } from '../orders/order-repo.js';
+import { OrderRepo } from '../orders/order-repo.js';
 import { OrderService, type MutationResult } from '../orders/order-service.js';
 import type { RedisClient } from '../redis.js';
-import { findTenantBySlug } from '../tenant/catalog-repo.js';
+import { CatalogRepo, findTenantBySlug } from '../tenant/catalog-repo.js';
 import { TokenBucket, type TokenBucketRule } from './token-bucket.js';
 
 /** Sala namespaceada por cadena (regla 12). Se deriva del token: el cliente no elige a qué sala entra. */
 export const roomFor = (tenantId: string, orderId: string) => `tenant:${tenantId}:order:${orderId}`;
+export const kitchenRoomFor = (tenantId: string, branchId: string) =>
+  `tenant:${tenantId}:branch:${branchId}:kitchen`;
 
 export type Publisher = (tenantId: string, event: OrderEvent) => void;
 
@@ -31,58 +44,25 @@ export const DEFAULT_SOCKET_RATE_LIMIT: TokenBucketRule = { capacity: 30, refill
 export const DEFAULT_MAX_RESYNC_EVENTS = 200;
 
 /** Solo datos planos: el adapter los serializa cuando otra instancia hace fetchSockets(). */
-interface SocketData {
-  tenantId: string;
-  orderId: string;
-  participantId: string;
-  choosing: boolean;
-}
-
-export type ErrorAck = {
-  ok: false;
-  error: { code: string; message: string };
-  /** Versión actual del pedido, para que el cliente sepa si le falta algo. null si no se consultó. */
-  version: number | null;
-};
-export type CommandAck =
-  { ok: true; status: MutationResult['status']; version: number; event: OrderEvent } | ErrorAck;
-
-export type ResyncAck =
-  | { ok: true; mode: 'events'; events: OrderEvent[] }
-  | { ok: true; mode: 'snapshot'; snapshot: OrderSnapshot }
-  | ErrorAck;
-
-export interface PresenceState {
-  participants: { participantId: string; choosing: boolean }[];
-}
-
-const COMMANDS = [
-  'item:add',
-  'item:increment',
-  'item:remove',
-  'item:notes',
-  'order:lock',
-  'order:unlock',
-  'order:submit',
-] as const;
-type CommandName = (typeof COMMANDS)[number];
-
-type CommandHandler = (payload: unknown, ack: (res: CommandAck) => void) => void;
-
-interface ClientToServerEvents extends Record<CommandName, CommandHandler> {
-  'order:resync': (payload: unknown, ack: (res: ResyncAck) => void) => void;
-  'presence:choosing': (payload: unknown) => void;
-}
-
-interface ServerToClientEvents {
-  'order:event': (event: OrderEvent) => void;
-  'presence:state': (state: PresenceState) => void;
-}
+type SocketData =
+  | {
+      kind: 'participant';
+      tenantId: string;
+      orderId: string;
+      participantId: string;
+      choosing: boolean;
+    }
+  | { kind: 'kitchen'; tenantId: string; branchId: string };
 
 type AppServer = Server<ClientToServerEvents, ServerToClientEvents, object, SocketData>;
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents, object, SocketData>;
 
-const ResyncRequest = z.object({ sinceVersion: z.number().int().min(0).nullable() });
+const KitchenAuth = z.object({
+  kind: z.literal('kitchen'),
+  tenantSlug: z.string(),
+  branchId: z.uuid(),
+});
+const ParticipantAuth = z.object({ tenantSlug: z.string(), token: z.string().optional() });
 
 export async function attachRealtime(httpServer: HttpServer, deps: RealtimeDeps) {
   const {
@@ -115,34 +95,64 @@ export async function attachRealtime(httpServer: HttpServer, deps: RealtimeDeps)
     }
   };
 
+  /** Un pedido recién enviado aparece en vivo en la pantalla de cocina de su sucursal. */
+  async function publishToKitchen(tenantId: string, orderId: string) {
+    try {
+      const repo = new OrderRepo(pool, tenantId);
+      const branchId = await repo.getBranchId(orderId);
+      if (!branchId) return;
+      const [order] = await repo.listKitchenOrders(branchId, { orderId });
+      if (order) io.to(kitchenRoomFor(tenantId, branchId)).emit('kitchen:order', order);
+    } catch (err) {
+      console.error('[realtime] no se pudo avisar a la cocina', err);
+    }
+  }
+
   // Autenticación en el handshake: el token tiene que ser de la cadena indicada (regla 10).
   io.use(async (socket, next) => {
     try {
-      const { tenantSlug, token } = (socket.handshake.auth ?? {}) as Record<string, unknown>;
-      if (typeof tenantSlug !== 'string')
-        throw new AppError(401, 'UNAUTHORIZED', 'Falta la cadena');
+      const auth = (socket.handshake.auth ?? {}) as Record<string, unknown>;
+      const { tenantSlug } = ParticipantAuth.parse(auth);
       const tenant = await findTenantBySlug(pool, tenantSlug);
       if (!tenant) throw new AppError(404, 'TENANT_NOT_FOUND', 'Cadena inexistente');
-      const actor = authenticateParticipant(
-        typeof token === 'string' ? token : undefined,
-        tenant.id,
-        tokenSecret,
-      );
-      socket.data = { ...actor, choosing: false };
+
+      if (auth.kind === 'kitchen') {
+        // Demo: la pantalla de cocina no tiene login (fuera de alcance); solo ve pedidos enviados.
+        const { branchId } = KitchenAuth.parse(auth);
+        const branches = await new CatalogRepo(pool, tenant.id).listBranches();
+        if (!branches.some((b) => b.id === branchId)) {
+          throw new AppError(404, 'BRANCH_NOT_FOUND', 'Sucursal inexistente');
+        }
+        socket.data = { kind: 'kitchen', tenantId: tenant.id, branchId };
+      } else {
+        const token = typeof auth.token === 'string' ? auth.token : undefined;
+        const actor = authenticateParticipant(token, tenant.id, tokenSecret);
+        socket.data = { kind: 'participant', ...actor, choosing: false };
+      }
       next();
     } catch (err) {
-      const code = err instanceof AppError ? err.code : 'INTERNAL';
-      if (!(err instanceof AppError)) console.error('[realtime] handshake', err);
+      let code: ApiError['code'] = 'INTERNAL';
+      if (err instanceof AppError) code = err.code;
+      else if (err instanceof ZodError) code = 'UNAUTHORIZED';
+      else console.error('[realtime] handshake', err);
       next(Object.assign(new Error(code), { data: { code } }));
     }
   });
 
   io.on('connection', (socket) => {
-    void onConnection(socket).catch((err) => console.error('[realtime] conexión', err));
+    const data = socket.data;
+    const setup =
+      data.kind === 'kitchen'
+        ? socket.join(kitchenRoomFor(data.tenantId, data.branchId))
+        : onParticipant(socket, data);
+    void Promise.resolve(setup).catch((err) => console.error('[realtime] conexión', err));
   });
 
-  async function onConnection(socket: AppSocket) {
-    const { tenantId, orderId, participantId } = socket.data;
+  async function onParticipant(
+    socket: AppSocket,
+    data: Extract<SocketData, { kind: 'participant' }>,
+  ) {
+    const { tenantId, orderId, participantId } = data;
     const actor = { tenantId, orderId, participantId };
     const room = roomFor(tenantId, orderId);
     const service = new OrderService(pool, tenantId);
@@ -164,7 +174,7 @@ export async function attachRealtime(httpServer: HttpServer, deps: RealtimeDeps)
     });
 
     const errorAck = async (err: unknown): Promise<ErrorAck> => {
-      let error = { code: 'INTERNAL', message: 'Error interno' };
+      let error: ApiError = { code: 'INTERNAL', message: 'Error interno' };
       if (err instanceof AppError) error = { code: err.code, message: err.message };
       else if (err instanceof ZodError)
         error = { code: 'VALIDATION_ERROR', message: 'Datos inválidos' };
@@ -183,14 +193,17 @@ export async function attachRealtime(httpServer: HttpServer, deps: RealtimeDeps)
       'order:unlock': (p) => service.unlockOrder(actor, p),
       'order:submit': (p) => service.submitOrder(actor, p),
     };
-    for (const name of COMMANDS) {
+    for (const name of COMMAND_NAMES) {
       const run = commands[name];
       socket.on(name, async (payload, ack) => {
         if (typeof ack !== 'function') return; // sin ack el cliente no podría confirmar ni revertir
         try {
           const result = await run(payload as never);
           // Un duplicado ya se emitió cuando se aplicó; si ese emit se perdió, lo cubre el resync.
-          if (result.status === 'applied') publish(tenantId, result.event);
+          if (result.status === 'applied') {
+            publish(tenantId, result.event);
+            if (result.event.type === 'order_submitted') void publishToKitchen(tenantId, orderId);
+          }
           ack({
             ok: true,
             status: result.status,
@@ -207,7 +220,7 @@ export async function attachRealtime(httpServer: HttpServer, deps: RealtimeDeps)
     socket.on('order:resync', async (payload, ack) => {
       if (typeof ack !== 'function') return;
       try {
-        const { sinceVersion } = ResyncRequest.parse(payload);
+        const { sinceVersion } = ResyncRequestSchema.parse(payload);
         if (sinceVersion !== null) {
           const events = await repo.getEventsSince(orderId, sinceVersion, maxResyncEvents);
           if (events) return ack({ ok: true, mode: 'events', events });
@@ -221,9 +234,9 @@ export async function attachRealtime(httpServer: HttpServer, deps: RealtimeDeps)
     // Presencia: efímera, solo en memoria de los sockets y compartida vía el adapter de Redis.
     // Nunca toca Postgres ni la versión del pedido.
     socket.on('presence:choosing', (payload) => {
-      const choosing = (payload as { choosing?: unknown } | null)?.choosing === true;
-      if (socket.data.choosing === choosing) return;
-      socket.data.choosing = choosing;
+      const parsed = ChoosingSchema.safeParse(payload);
+      if (!parsed.success || data.choosing === parsed.data.choosing) return;
+      data.choosing = parsed.data.choosing;
       void broadcastPresence(room);
     });
 
@@ -243,9 +256,10 @@ export async function attachRealtime(httpServer: HttpServer, deps: RealtimeDeps)
     try {
       const sockets = await io.in(room).fetchSockets();
       const choosingByParticipant = new Map<string, boolean>();
-      for (const s of sockets) {
-        const prev = choosingByParticipant.get(s.data.participantId) ?? false;
-        choosingByParticipant.set(s.data.participantId, prev || s.data.choosing);
+      for (const { data } of sockets) {
+        if (data.kind !== 'participant') continue;
+        const prev = choosingByParticipant.get(data.participantId) ?? false;
+        choosingByParticipant.set(data.participantId, prev || data.choosing);
       }
       io.to(room).emit('presence:state', {
         participants: [...choosingByParticipant].map(([participantId, choosing]) => ({

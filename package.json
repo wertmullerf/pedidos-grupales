@@ -5,6 +5,7 @@
   "workspaces": [
     "apps/server",
     "apps/web",
+    "packages/shared",
     "packages/client"
   ],
   "scripts": {

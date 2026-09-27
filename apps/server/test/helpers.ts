@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { OrderEvent } from '@pedido/shared';
 import { afterAll, beforeAll } from 'vitest';
 import type { Express } from 'express';
 import { createApp, type AppDeps } from '../src/app.js';
@@ -40,4 +41,10 @@ export function useTestApp(overrides: Partial<Pick<AppDeps, 'rateLimits'>> = {})
   });
 
   return ctx;
+}
+
+/** Id de la línea creada por un evento item_added (los payloads son una unión discriminada). */
+export function addedItemId(event: OrderEvent): string {
+  if (event.type !== 'item_added') throw new Error(`se esperaba item_added, llegó ${event.type}`);
+  return event.payload.item.id;
 }

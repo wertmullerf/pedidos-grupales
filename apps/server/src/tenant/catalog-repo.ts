@@ -1,27 +1,9 @@
+import type { Branch, MenuItem, TenantInfo } from '@pedido/shared';
 import type pg from 'pg';
 
-export interface Tenant {
+/** La cadena con su id interno (el id no se expone por la API). */
+export interface Tenant extends TenantInfo {
   id: string;
-  slug: string;
-  name: string;
-  primaryColor: string;
-  logoUrl: string | null;
-}
-
-export interface Branch {
-  id: string;
-  name: string;
-  address: string;
-  isOpen: boolean;
-}
-
-export interface MenuItem {
-  id: string;
-  category: string;
-  name: string;
-  description: string;
-  priceCents: number;
-  available: boolean;
 }
 
 export async function findTenantBySlug(pool: pg.Pool, slug: string): Promise<Tenant | null> {

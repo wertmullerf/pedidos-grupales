@@ -1,24 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import type { ParticipantToken } from '../auth/token.js';
-import { Rollback, withTransaction } from '../db/tx.js';
-import { AppError } from '../http/errors.js';
 import {
-  AddItem,
-  IncrementItem,
-  OrderCommand,
-  RemoveItem,
-  UpdateNotes,
+  AddItemCommand,
+  IncrementItemCommand,
+  OrderStatusCommand,
+  RemoveItemCommand,
+  UpdateNotesCommand,
   type AddItemInput,
+  type EventType,
   type IncrementItemInput,
-  type OrderCommandInput,
+  type OrderEvent,
+  type OrderItem,
+  type OrderStatus,
+  type OrderStatusInput,
   type RemoveItemInput,
   type UpdateNotesInput,
-} from './commands.js';
-import { orderNotFound, type OrderStatus } from './order-repo.js';
-import type { EventType, OrderEvent } from './events.js';
-
-export type { EventType, OrderEvent };
+} from '@pedido/shared';
+import { isUniqueViolation, Rollback, withTransaction } from '../db/tx.js';
+import { AppError } from '../http/errors.js';
+import { orderNotFound } from './order-repo.js';
 
 /** `applied`: se aplicó ahora. `duplicate`: el clientOpId ya se había aplicado; se devuelve el evento original. */
 export interface MutationResult {
@@ -69,7 +70,7 @@ export class OrderService {
   ) {}
 
   async addItem(actor: ParticipantToken, input: AddItemInput): Promise<MutationResult> {
-    const cmd = AddItem.parse(input);
+    const cmd = AddItemCommand.parse(input);
     // Nombre y precio salen del menú de ESTA cadena y solo si está disponible (regla 11);
     // el precio queda congelado en la línea.
     return this.mutate(actor, cmd.clientOpId, {
@@ -80,39 +81,41 @@ export class OrderService {
           'id', $6::uuid, 'participantId', $5::uuid, 'menuItemId', m.id, 'name', m.name,
           'unitPriceCents', m.price_cents, 'quantity', $8::int, 'notes', $9::text)
         FROM menu_items m WHERE m.id = $7 AND m.tenant_id = $10 AND m.available))`,
-      params: [randomUUID(), cmd.menuItemId, cmd.quantity, cmd.notes, this.tenantId],
+      params: [cmd.itemId ?? randomUUID(), cmd.menuItemId, cmd.quantity, cmd.notes, this.tenantId],
       isValid: (p) => p.item != null,
       explainInvalid: () => this.menuItemRejection(cmd.menuItemId),
       apply: async (client, p) => {
-        const item = p.item as {
-          id: string;
-          menuItemId: string;
-          unitPriceCents: number;
-          quantity: number;
-          notes: string;
-        };
-        await client.query(
-          `INSERT INTO order_items
+        const item = p.item as OrderItem;
+        await client
+          .query(
+            `INSERT INTO order_items
              (id, tenant_id, order_id, participant_id, menu_item_id, unit_price_cents, quantity, notes)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            item.id,
-            this.tenantId,
-            actor.orderId,
-            actor.participantId,
-            item.menuItemId,
-            item.unitPriceCents,
-            item.quantity,
-            item.notes,
-          ],
-        );
+            [
+              item.id,
+              this.tenantId,
+              actor.orderId,
+              actor.participantId,
+              item.menuItemId,
+              item.unitPriceCents,
+              item.quantity,
+              item.notes,
+            ],
+          )
+          .catch((err) => {
+            // El id de línea lo puede proponer el cliente: si ya existe, no es un error interno.
+            if (isUniqueViolation(err, 'order_items_pkey')) {
+              throw new AppError(409, 'ITEM_ID_CONFLICT', 'Ese id de línea ya existe');
+            }
+            throw err;
+          });
       },
     });
   }
 
   /** Suma un delta a una línea propia. Si la cantidad resultante llega a 0 o menos, la línea se elimina. */
   async incrementItem(actor: ParticipantToken, input: IncrementItemInput): Promise<MutationResult> {
-    const cmd = IncrementItem.parse(input);
+    const cmd = IncrementItemCommand.parse(input);
     return this.mutate(actor, cmd.clientOpId, {
       type: 'item_incremented',
       from: 'open',
@@ -141,7 +144,7 @@ export class OrderService {
   }
 
   async removeItem(actor: ParticipantToken, input: RemoveItemInput): Promise<MutationResult> {
-    const cmd = RemoveItem.parse(input);
+    const cmd = RemoveItemCommand.parse(input);
     return this.mutate(actor, cmd.clientOpId, {
       type: 'item_removed',
       from: 'open',
@@ -160,7 +163,7 @@ export class OrderService {
   }
 
   async updateNotes(actor: ParticipantToken, input: UpdateNotesInput): Promise<MutationResult> {
-    const cmd = UpdateNotes.parse(input);
+    const cmd = UpdateNotesCommand.parse(input);
     return this.mutate(actor, cmd.clientOpId, {
       type: 'item_notes_updated',
       from: 'open',
@@ -183,8 +186,8 @@ export class OrderService {
    * Cierra el pedido (regla 6). Como toda mutación exige status = 'open' en el mismo UPDATE que
    * toma el lock, cualquier operación que se serialice después de este COMMIT es rechazada.
    */
-  async lockOrder(actor: ParticipantToken, input: OrderCommandInput): Promise<MutationResult> {
-    const { clientOpId } = OrderCommand.parse(input);
+  async lockOrder(actor: ParticipantToken, input: OrderStatusInput): Promise<MutationResult> {
+    const { clientOpId } = OrderStatusCommand.parse(input);
     return this.mutate(actor, clientOpId, {
       type: 'order_locked',
       from: 'open',
@@ -193,8 +196,8 @@ export class OrderService {
     });
   }
 
-  async unlockOrder(actor: ParticipantToken, input: OrderCommandInput): Promise<MutationResult> {
-    const { clientOpId } = OrderCommand.parse(input);
+  async unlockOrder(actor: ParticipantToken, input: OrderStatusInput): Promise<MutationResult> {
+    const { clientOpId } = OrderStatusCommand.parse(input);
     return this.mutate(actor, clientOpId, {
       type: 'order_unlocked',
       from: 'locked',
@@ -204,8 +207,8 @@ export class OrderService {
   }
 
   /** Envía el pedido a la sucursal: tiene que estar cerrado, con ítems y la sucursal abierta (regla 13). */
-  async submitOrder(actor: ParticipantToken, input: OrderCommandInput): Promise<MutationResult> {
-    const { clientOpId } = OrderCommand.parse(input);
+  async submitOrder(actor: ParticipantToken, input: OrderStatusInput): Promise<MutationResult> {
+    const { clientOpId } = OrderStatusCommand.parse(input);
     return this.mutate(actor, clientOpId, {
       type: 'order_submitted',
       from: 'locked',
@@ -272,13 +275,14 @@ export class OrderService {
       case 'applied':
         return {
           status: 'applied',
+          // El payload lo arma el SQL de cada operación con la forma del schema compartido.
           event: {
             orderId: actor.orderId,
             version: outcome.version,
             clientOpId,
             type: spec.type,
             payload: outcome.payload,
-          },
+          } as OrderEvent,
         };
       case 'duplicate':
         return { status: 'duplicate', event: await this.replay(actor, clientOpId, spec.type) };

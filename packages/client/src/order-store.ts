@@ -1,37 +1,40 @@
-import type { OrderEvent, OrderItem, OrderSnapshot, Participant } from './types.js';
+import type { OrderEvent, OrderSnapshot } from '@pedido/shared';
 
 /** Aplica un evento al estado. Pura: no valida versiones (eso lo hace OrderStore). */
 export function reduceEvent(state: OrderSnapshot, event: OrderEvent): OrderSnapshot {
-  const p = event.payload;
   let { participants, items } = state;
   let status = state.order.status;
 
   switch (event.type) {
     case 'participant_joined': {
-      const participant = p.participant as Participant;
+      const { participant } = event.payload;
       if (!participants.some((x) => x.id === participant.id)) {
         participants = [...participants, participant];
       }
       break;
     }
     case 'item_added':
-      items = [...items, p.item as OrderItem];
+      items = [...items, event.payload.item];
       break;
     case 'item_incremented': {
       // El server manda la cantidad resultante; 0 significa que la línea se eliminó.
-      const quantity = p.quantity as number;
+      const { itemId, quantity } = event.payload;
       items =
         quantity > 0
-          ? items.map((i) => (i.id === p.itemId ? { ...i, quantity } : i))
-          : items.filter((i) => i.id !== p.itemId);
+          ? items.map((i) => (i.id === itemId ? { ...i, quantity } : i))
+          : items.filter((i) => i.id !== itemId);
       break;
     }
-    case 'item_removed':
-      items = items.filter((i) => i.id !== p.itemId);
+    case 'item_removed': {
+      const { itemId } = event.payload;
+      items = items.filter((i) => i.id !== itemId);
       break;
-    case 'item_notes_updated':
-      items = items.map((i) => (i.id === p.itemId ? { ...i, notes: p.notes as string } : i));
+    }
+    case 'item_notes_updated': {
+      const { itemId, notes } = event.payload;
+      items = items.map((i) => (i.id === itemId ? { ...i, notes } : i));
       break;
+    }
     case 'order_locked':
       status = 'locked';
       break;

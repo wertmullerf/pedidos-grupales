@@ -1,12 +1,18 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type pg from 'pg';
+import {
+  ORDER_CODE_LENGTH,
+  type KitchenOrder,
+  type OrderEvent,
+  type OrderPreview,
+  type OrderSnapshot,
+  type Participant,
+} from '@pedido/shared';
 import { isUniqueViolation, Rollback, withTransaction } from '../db/tx.js';
 import { AppError } from '../http/errors.js';
-import type { OrderEvent } from './events.js';
 
 // Sin 0/O ni 1/I para que el código se pueda dictar sin confusiones.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const CODE_LENGTH = 6;
 
 export const PARTICIPANT_COLORS = [
   '#E03131',
@@ -19,12 +25,6 @@ export const PARTICIPANT_COLORS = [
   '#5C940D',
 ];
 
-export interface Participant {
-  id: string;
-  name: string;
-  color: string;
-}
-
 export interface JoinResult {
   orderId: string;
   participant: Participant;
@@ -32,44 +32,10 @@ export interface JoinResult {
   event?: OrderEvent;
 }
 
-export interface OrderSnapshot {
-  order: {
-    id: string;
-    code: string;
-    status: OrderStatus;
-    version: number;
-    hostParticipantId: string;
-    createdAt: string;
-    updatedAt: string;
-  };
-  branch: { id: string; name: string; address: string; isOpen: boolean };
-  participants: (Participant & { joinedAt: string })[];
-  items: {
-    id: string;
-    participantId: string;
-    menuItemId: string;
-    name: string;
-    unitPriceCents: number;
-    quantity: number;
-    notes: string;
-  }[];
-  totalCents: number;
-}
-
-/** Vista pública de un pedido: alcanza para la pantalla de "unirse", sin exponer ítems ni nombres. */
-export interface OrderPreview {
-  tenant: { slug: string; name: string };
-  branch: { name: string; address: string };
-  hostName: string;
-  participantCount: number;
-  status: OrderStatus;
-}
-
-export type OrderStatus = 'open' | 'locked' | 'submitted';
-
 export function generateCode(): string {
   let code = '';
-  for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
+  for (let i = 0; i < ORDER_CODE_LENGTH; i++)
+    code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
   return code;
 }
 
@@ -236,6 +202,52 @@ export class OrderRepo {
       [orderId, this.tenantId, sinceVersion, limit + 1],
     );
     return rows.length > limit ? null : rows;
+  }
+
+  /**
+   * Pedidos enviados a una sucursal, como los ve la cocina (más recientes primero).
+   * Con `orderId` devuelve solo ese pedido (para emitirlo en vivo al enviarse).
+   */
+  async listKitchenOrders(
+    branchId: string,
+    { orderId, limit = 20 }: { orderId?: string; limit?: number } = {},
+  ): Promise<KitchenOrder[]> {
+    const { rows } = await this.pool.query<{ order: KitchenOrder }>(
+      `SELECT json_build_object(
+         'code', o.code,
+         'submittedAt', o.updated_at,
+         'participants', COALESCE((
+           SELECT json_agg(json_build_object('id', p.id, 'name', p.name, 'color', p.color)
+                           ORDER BY p.joined_at, p.id)
+           FROM participants p WHERE p.order_id = o.id), '[]'),
+         'items', COALESCE((
+           SELECT json_agg(json_build_object(
+                    'id', i.id, 'participantId', i.participant_id, 'name', m.name,
+                    'quantity', i.quantity, 'notes', i.notes)
+                  ORDER BY i.created_at, i.id)
+           FROM order_items i
+           JOIN menu_items m ON m.id = i.menu_item_id AND m.tenant_id = i.tenant_id
+           WHERE i.order_id = o.id AND i.tenant_id = o.tenant_id), '[]'),
+         'totalCents', (
+           SELECT COALESCE(sum(i.quantity * i.unit_price_cents), 0)::int
+           FROM order_items i WHERE i.order_id = o.id AND i.tenant_id = o.tenant_id)
+       ) AS order
+       FROM group_orders o
+       WHERE o.tenant_id = $1 AND o.branch_id = $2 AND o.status = 'submitted'
+         AND ($3::uuid IS NULL OR o.id = $3)
+       ORDER BY o.updated_at DESC
+       LIMIT $4`,
+      [this.tenantId, branchId, orderId ?? null, limit],
+    );
+    return rows.map((r) => r.order);
+  }
+
+  async getBranchId(orderId: string): Promise<string | null> {
+    const { rows } = await this.pool.query<{ branch_id: string }>(
+      'SELECT branch_id FROM group_orders WHERE id = $1 AND tenant_id = $2',
+      [orderId, this.tenantId],
+    );
+    return rows[0]?.branch_id ?? null;
   }
 
   async getVersion(orderId: string): Promise<number | null> {

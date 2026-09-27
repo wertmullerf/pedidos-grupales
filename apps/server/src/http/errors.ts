@@ -1,10 +1,11 @@
+import type { ApiErrorBody, ErrorCode } from '@pedido/shared';
 import type { ErrorRequestHandler } from 'express';
 import { ZodError } from 'zod';
 
 export class AppError extends Error {
   constructor(
     readonly status: number,
-    readonly code: string,
+    readonly code: ErrorCode,
     message: string = code,
   ) {
     super(message);
@@ -13,7 +14,9 @@ export class AppError extends Error {
 
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err instanceof AppError) {
-    res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    res
+      .status(err.status)
+      .json({ error: { code: err.code, message: err.message } } satisfies ApiErrorBody);
     return;
   }
   if (err instanceof ZodError) {

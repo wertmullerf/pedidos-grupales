@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { ConnectionError, OrderConnection, type OrderSnapshot } from '@pedido/client';
+import { ConnectionError, OrderConnection } from '@pedido/client';
+import type { OrderSnapshot } from '@pedido/shared';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { signToken, verifyToken } from '../src/auth/token.js';
@@ -8,7 +9,7 @@ import { createPool } from '../src/db/pool.js';
 import { OrderService } from '../src/orders/order-service.js';
 import { connectRedis, type RedisClient } from '../src/redis.js';
 import { startServer, type ServerDeps } from '../src/server.js';
-import { TEST_TOKEN_SECRET } from './helpers.js';
+import { addedItemId, TEST_TOKEN_SECRET } from './helpers.js';
 
 type Instance = Awaited<ReturnType<typeof startServer>> & { name: string };
 
@@ -141,8 +142,8 @@ describe('tiempo real', () => {
       const a = await add(host);
       const b = await add(guest);
       if (!a.ok || !b.ok) throw new Error('add falló');
-      const hostItem = (a.event.payload.item as { id: string }).id;
-      const guestItem = (b.event.payload.item as { id: string }).id;
+      const hostItem = addedItemId(a.event);
+      const guestItem = addedItemId(b.event);
       await host.send('item:increment', { clientOpId: randomUUID(), itemId: hostItem, delta: 2 });
       await guest.send('item:notes', {
         clientOpId: randomUUID(),
