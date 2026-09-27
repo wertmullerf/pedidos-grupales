@@ -169,6 +169,29 @@ describe('API REST del pedido', () => {
       }
     });
 
+    it('el snapshot ordena a los participantes igual que los eventos, aun con joins concurrentes', async () => {
+      const host = await createOrder();
+      // Varios joins a la vez: el orden de inicio de las transacciones no es el orden de los locks.
+      await Promise.all(
+        Array.from({ length: 12 }, (_, i) =>
+          api()
+            .post(`/api/t/brasaburg/orders/${host.code}/join`)
+            .send({ name: `P${i}` }),
+        ),
+      );
+      const { rows } = await ctx.pool.query<{ id: string }>(
+        `SELECT e.payload->'participant'->>'id' AS id
+         FROM order_events e JOIN group_orders o ON o.id = e.order_id
+         WHERE o.code = $1 AND e.type = 'participant_joined' ORDER BY e.version`,
+        [host.code],
+      );
+      const snap = await snapshot('brasaburg', host.code, host.token);
+      expect(snap.body.participants.map((p: { id: string }) => p.id)).toEqual([
+        host.participant.id,
+        ...rows.map((r) => r.id),
+      ]);
+    });
+
     it('unirse dos veces con el mismo clientOpId crea un solo participante', async () => {
       const host = await createOrder();
       const clientOpId = randomUUID();
