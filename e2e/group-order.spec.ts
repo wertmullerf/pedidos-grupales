@@ -27,16 +27,17 @@ ${JSON.stringify(views, null, 2)}`);
 test('3 personas arman un pedido en simultáneo y todas las pantallas terminan iguales', async ({
   browser,
 }) => {
-  const host = await newPhone(browser);
-  const beto = await newPhone(browser);
-  const cata = await newPhone(browser);
+  // Modo debug: el test usa la actividad y "Simular desconexión", que la UI pública no muestra.
+  const host = await newPhone(browser, { debug: true });
+  const beto = await newPhone(browser, { debug: true });
+  const cata = await newPhone(browser, { debug: true });
   const phones = [host.page, beto.page, cata.page];
 
   // --- Host crea, invitados se unen por link ---
-  const code = await createOrder(host.page, 'brasaburg', 'Ana');
+  const code = await createOrder(host.page, 'hamburgueseria-test', 'Ana');
   await Promise.all([
-    joinOrder(beto.page, 'brasaburg', code, 'Beto'),
-    joinOrder(cata.page, 'brasaburg', code, 'Cata'),
+    joinOrder(beto.page, 'hamburgueseria-test', code, 'Beto'),
+    joinOrder(cata.page, 'hamburgueseria-test', code, 'Cata'),
   ]);
   for (const page of phones) {
     await expect(page.getByTestId('people').getByRole('listitem')).toHaveCount(3);
@@ -44,7 +45,7 @@ test('3 personas arman un pedido en simultáneo y todas las pantallas terminan i
 
   // --- Los tres operan a la vez (incluye ráfagas de toques que agrupa el debounce) ---
   await Promise.all([
-    tapAdd(host.page, 'Brasa Clásica', 3),
+    tapAdd(host.page, 'Clásica', 3),
     (async () => {
       await tapAdd(beto.page, 'Doble Ahumada');
       await tapAdd(beto.page, 'Papas rústicas', 4, 60);
@@ -60,7 +61,7 @@ test('3 personas arman un pedido en simultáneo y todas las pantallas terminan i
   for (const page of phones) await settle(page, 300);
 
   let order = await expectSameOrder(phones);
-  expect(order.parts.Ana!.lines).toEqual(['3× Brasa Clásica']);
+  expect(order.parts.Ana!.lines).toEqual(['3× Clásica']);
   expect(order.parts.Beto!.lines).toEqual(['1× Doble Ahumada (sin cebolla)', '3× Papas rústicas']);
   expect(order.parts.Cata!.lines).toEqual(['1× Limonada de la casa', '2× Veggie de Lentejas']);
   // 3×9.500 + 12.500 + 3×4.200 + 2×9.800 + 3.200 = 76.400
@@ -88,10 +89,9 @@ test('3 personas arman un pedido en simultáneo y todas las pantallas terminan i
   await expect(host.page.getByRole('heading', { name: 'Resumen final' })).toBeVisible();
   // Beto todavía ve el pedido abierto (no se enteró del cierre) y agrega algo.
   await tapAdd(beto.page, 'Veggie de Lentejas');
-  await expect(beto.page.getByRole('alert')).toContainText(
-    'El pedido se cerró, tu último cambio no se aplicó',
-    { timeout: 15_000 },
-  );
+  await expect(
+    beto.page.getByText('El pedido se cerró, tu último cambio no se aplicó'),
+  ).toBeVisible({ timeout: 15_000 });
   // El cambio rechazado se revirtió: todos siguen viendo lo mismo.
   order = await expectSameOrder(phones);
   expect(order.groupTotal).toBe('$ 84.600');
@@ -104,10 +104,10 @@ test('3 personas arman un pedido en simultáneo y todas las pantallas terminan i
     viewport: { width: 1280, height: 800 },
   });
   const kitchen = await kitchenCtx.newPage();
-  const branches = await (await fetch(`${BASE_URL}/api/t/brasaburg/branches`)).json();
-  const branchName = await host.page.locator('[class*="branchName"]').first().textContent();
-  const branch = branches.find((b: { name: string }) => b.name === branchName);
-  await kitchen.goto(`/t/brasaburg/branch/${branch.id}/kitchen`);
+  const branches = await (await fetch(`${BASE_URL}/api/t/hamburgueseria-test/branches`)).json();
+  // La home elige la primera sucursal abierta (mismo orden que la API).
+  const branch = branches.find((b: { isOpen: boolean }) => b.isOpen);
+  await kitchen.goto(`/t/hamburgueseria-test/branch/${branch.id}/kitchen?debug=1`);
   await expect(kitchen.getByText('En vivo')).toBeVisible();
 
   await host.page.getByRole('button', { name: /^Enviar a/ }).click();

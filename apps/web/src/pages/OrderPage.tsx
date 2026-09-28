@@ -1,21 +1,35 @@
 import { totalsByParticipant } from '@pedido/client';
 import type { MenuItem, OrderSnapshot } from '@pedido/shared';
+import { cn } from 'cn';
+import { Check, Share } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
-import { BrandMark } from '../components/BrandMark';
-import { ActivityPanel } from '../components/order/ActivityPanel';
-import { ConnectionBadge } from '../components/order/ConnectionBadge';
-import { FinalSummary } from '../components/order/FinalSummary';
-import { GroupOrderPanel } from '../components/order/GroupOrderPanel';
-import { MenuPanel } from '../components/order/MenuPanel';
-import { PeopleStrip } from '../components/order/PeopleStrip';
-import { SummaryBar } from '../components/order/SummaryBar';
-import { Toasts } from '../components/order/Toasts';
-import styles from '../components/order/order.module.css';
-import { api } from '../lib/api';
-import type { Identity } from '../lib/identity';
-import { rejectionMessage } from '../lib/messages';
-import { useTenant } from '../lib/tenant';
-import { useOrderLive } from '../lib/useOrderLive';
+import { ActivityPanel } from '@/components/order/ActivityPanel';
+import { ConnectionStatus } from '@/components/order/ConnectionStatus';
+import { FinalSummary } from '@/components/order/FinalSummary';
+import { GroupOrder } from '@/components/order/GroupOrder';
+import { MenuList } from '@/components/order/MenuList';
+import { notifyInfo } from '@/components/order/notify';
+import { PeopleRow } from '@/components/order/PeopleRow';
+import { SummaryBar } from '@/components/order/SummaryBar';
+import { Wordmark } from '@/components/Wordmark';
+import { Button } from '@/components/ui/button';
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { api } from '@/lib/api';
+import { DEBUG } from '@/lib/debug';
+import type { Identity } from '@/lib/identity';
+import { rejectionMessage } from '@/lib/messages';
+import { useTenant } from '@/lib/tenant';
+import { useOrderLive } from '@/lib/useOrderLive';
 
 type Tab = 'menu' | 'order' | 'activity';
 
@@ -40,11 +54,12 @@ export function OrderPage({
   }, [tenant.slug]);
 
   const { state, session } = live;
-  if (!state || !session) {
+  if (!state) {
     return (
-      <div className={styles.loadingScreen} aria-busy="true">
-        <BrandMark tenant={tenant} size={56} />
-        <span>Conectando al pedido {code}…</span>
+      <div className="mx-auto max-w-md space-y-4 px-5 pt-12" aria-busy="true">
+        <Wordmark name={tenant.name} className="text-[22px]" />
+        <Skeleton className="h-6 w-2/3" />
+        <Skeleton className="h-40" />
       </div>
     );
   }
@@ -59,11 +74,10 @@ export function OrderPage({
   if (status === 'submitted') return <SubmittedScreen state={state} me={me} />;
 
   async function changeStatus(command: 'order:lock' | 'order:unlock' | 'order:submit') {
-    if (!session) return;
     setBusy(true);
     const ack = await session.setStatus(command);
     setBusy(false);
-    if (!ack.ok) live.toast(rejectionMessage(ack.error.code, command), 'warn');
+    if (!ack.ok) live.notifyError(rejectionMessage(ack.error.code, command));
     else if (command === 'order:lock') setReviewOpen(true);
     else if (command === 'order:unlock') setReviewOpen(false);
   }
@@ -81,63 +95,70 @@ export function OrderPage({
     }
     try {
       await navigator.clipboard.writeText(url);
-      live.toast('Link copiado. Pasalo por el grupo 🙌', 'ok');
+      notifyInfo('Link copiado');
     } catch {
-      live.toast(`Compartí este link: ${url}`, 'info');
+      notifyInfo(`Compartí este link: ${url}`);
     }
   }
 
-  return (
-    <div className={styles.page} data-tab={tab}>
-      <div className={styles.topBar}>
-        <BrandMark tenant={tenant} size={40} />
-        <div className={styles.headerTitle}>
-          <span className={styles.tenantName}>{tenant.name}</span>
-          <span className={styles.branchName}>{state.branch.name}</span>
-        </div>
-        <ConnectionBadge status={live.status} justSynced={live.justSynced} />
-      </div>
-      <header className={styles.header}>
-        <div className={styles.codeBar}>
-          <div>
-            <span className={styles.codeLabel}>Pedido grupal</span>
-            <span className={styles.code} data-testid="order-code">
-              {code}
-            </span>
-          </div>
-          <span className={styles.youAre}>
-            Sos <strong>{identity.name}</strong>
-          </span>
-          <button className={styles.shareButton} onClick={share}>
-            <ShareIcon /> Compartir
-          </button>
-        </div>
-        <PeopleStrip state={state} presence={live.presence} me={me} flash={live.flash} />
-      </header>
-      <nav className={styles.tabs} role="tablist" aria-label="Secciones">
-        {(
-          [
-            ['menu', 'Menú'],
-            ['order', `Pedido · ${itemCount}`],
-            ['activity', 'Actividad'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            className={styles.tab}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
+  const tabs: [Tab, string][] = [
+    ['menu', 'Menú'],
+    ['order', `Pedido · ${itemCount}`],
+    ...(DEBUG ? ([['activity', 'Actividad']] as [Tab, string][]) : []),
+  ];
 
-      <main className={styles.columns}>
-        <section className={`${styles.column} ${styles.colMenu}`} aria-label="Menú">
-          <h2 className={styles.columnTitle}>Menú</h2>
-          <MenuPanel
+  return (
+    <div className="min-h-dvh pb-28">
+      <header className="sticky top-0 z-20 border-b bg-background">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 lg:px-6">
+          <Wordmark name={tenant.name} className="text-[21px]" />
+          <span className="ml-auto">
+            <ConnectionStatus status={live.status} justSynced={live.justSynced} />
+          </span>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-6xl space-y-3 px-4 pt-3 pb-1 lg:px-6">
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1 leading-tight">
+            <p className="text-[13px] text-muted-foreground">
+              Sucursal {state.branch.name} · Sos {identity.name}
+            </p>
+            <p className="font-semibold">
+              Pedido grupal{' '}
+              <span className="tracking-[0.08em]" data-testid="order-code">
+                {code}
+              </span>
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={share}>
+            <Share /> Compartir
+          </Button>
+        </div>
+        <PeopleRow state={state} presence={live.presence} me={me} flash={live.flash} />
+      </div>
+
+      <div className="sticky top-14 z-10 border-b bg-background lg:hidden">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="px-4">
+          <TabsList variant="line" className="h-11 w-full justify-start gap-4">
+            {tabs.map(([id, label]) => (
+              <TabsTrigger key={id} value={id} className="flex-none px-0 text-[15px]">
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+
+      <main
+        className={cn(
+          'mx-auto max-w-6xl px-4 pt-4 lg:grid lg:gap-10 lg:px-6 lg:pt-6',
+          DEBUG ? 'lg:grid-cols-[1fr_400px_320px]' : 'lg:grid-cols-[1fr_420px]',
+        )}
+      >
+        <section aria-label="Menú" className={cn(tab !== 'menu' && 'hidden lg:block')}>
+          <h2 className="mb-2 hidden text-xl font-bold tracking-tight lg:block">Menú</h2>
+          <MenuList
             menu={menu}
             state={state}
             me={me}
@@ -146,9 +167,14 @@ export function OrderPage({
             onChoosing={live.markChoosing}
           />
         </section>
-        <section className={`${styles.column} ${styles.colOrder}`} aria-label="Pedido del grupo">
-          <h2 className={styles.columnTitle}>Pedido del grupo</h2>
-          <GroupOrderPanel
+        <section
+          aria-label="Pedido del grupo"
+          className={cn(tab !== 'order' && 'hidden lg:block', 'lg:sticky lg:top-20 lg:self-start')}
+        >
+          <h2 className="mb-4 hidden text-xl font-bold tracking-tight lg:block">
+            Pedido del grupo
+          </h2>
+          <GroupOrder
             state={state}
             me={me}
             session={session}
@@ -157,15 +183,23 @@ export function OrderPage({
             onGoToMenu={() => setTab('menu')}
           />
         </section>
-        <aside className={`${styles.column} ${styles.colActivity}`} aria-label="Actividad">
-          <ActivityPanel
-            entries={live.activity}
-            state={state}
-            me={me}
-            status={live.status}
-            onSimulateDisconnect={() => live.simulateDisconnect()}
-          />
-        </aside>
+        {DEBUG && (
+          <aside
+            aria-label="Actividad"
+            className={cn(
+              tab !== 'activity' && 'hidden lg:block',
+              'lg:sticky lg:top-20 lg:self-start',
+            )}
+          >
+            <ActivityPanel
+              entries={live.activity}
+              state={state}
+              me={me}
+              status={live.status}
+              onSimulateDisconnect={() => live.simulateDisconnect()}
+            />
+          </aside>
+        )}
       </main>
 
       <SummaryBar
@@ -180,44 +214,32 @@ export function OrderPage({
         onViewOrder={tab === 'menu' ? () => setTab('order') : undefined}
       />
 
-      {isHost && status === 'locked' && reviewOpen && (
-        <div className={styles.sheetBackdrop} onClick={() => setReviewOpen(false)}>
-          <div
-            className={styles.sheet}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="review-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={styles.sheetHandle} aria-hidden />
-            <h2 id="review-title" className={styles.sheetTitle}>
-              Resumen final
-            </h2>
-            <p className={styles.sheetSubtitle}>
+      <Drawer open={isHost && status === 'locked' && reviewOpen} onOpenChange={setReviewOpen}>
+        <DrawerContent>
+          <DrawerHeader>
+            <DrawerTitle>Resumen final</DrawerTitle>
+            <DrawerDescription>
               Pedido cerrado: nadie más puede cambiar nada. Revisalo antes de enviarlo.
-            </p>
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="overflow-y-auto px-5 pb-3">
             <FinalSummary state={state} me={me} />
-            <div className={styles.sheetActions}>
-              <button
-                className="btn btn-primary btn-block"
-                onClick={() => changeStatus('order:submit')}
-                disabled={busy}
-              >
-                Enviar a {state.branch.name}
-              </button>
-              <button
-                className="btn btn-ghost btn-block"
-                onClick={() => changeStatus('order:unlock')}
-                disabled={busy}
-              >
-                Reabrir para cambios
-              </button>
-            </div>
           </div>
-        </div>
-      )}
-
-      <Toasts toasts={live.toasts} />
+          <DrawerFooter>
+            <Button size="lg" onClick={() => changeStatus('order:submit')} disabled={busy}>
+              Enviar a sucursal {state.branch.name}
+            </Button>
+            <Button
+              size="lg"
+              variant="ghost"
+              onClick={() => changeStatus('order:unlock')}
+              disabled={busy}
+            >
+              Reabrir para cambios
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }
@@ -225,36 +247,31 @@ export function OrderPage({
 function SubmittedScreen({ state, me }: { state: OrderSnapshot; me: string }) {
   const tenant = useTenant();
   return (
-    <main className={styles.submitted} data-testid="submitted">
-      <div className={styles.submittedHero}>
-        <div className={styles.check} aria-hidden>
-          ✓
+    <main className="mx-auto min-h-dvh max-w-md px-5 pb-12" data-testid="submitted">
+      <header className="pt-12 pb-8">
+        <Wordmark name={tenant.name} className="text-[22px]" />
+      </header>
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="space-y-6"
+      >
+        <div className="space-y-3">
+          <span className="grid size-11 place-items-center rounded-full bg-primary text-primary-foreground">
+            <Check className="size-6" />
+          </span>
+          <h1 className="text-2xl font-bold tracking-tight">¡Pedido enviado!</h1>
+          <p className="text-muted-foreground">
+            Ya lo está recibiendo la sucursal {state.branch.name}. Pedido{' '}
+            <span className="font-semibold text-foreground">{state.order.code}</span>.
+          </p>
         </div>
-        <h1>¡Pedido enviado!</h1>
-        <p>
-          Ya lo está recibiendo {state.branch.name}. Pedido <strong>{state.order.code}</strong>
-        </p>
-      </div>
-      <div className={`card ${styles.submittedCard}`}>
         <FinalSummary state={state} me={me} />
-      </div>
-      <a className="btn btn-secondary" href={`/t/${tenant.slug}`}>
-        Armar otro pedido
-      </a>
+        <Button variant="outline" className="w-full" asChild>
+          <a href={`/t/${tenant.slug}`}>Armar otro pedido</a>
+        </Button>
+      </motion.div>
     </main>
-  );
-}
-
-function ShareIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M12 3v12M12 3l-4 4M12 3l4 4M5 12v6a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }

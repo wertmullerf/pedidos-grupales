@@ -4,7 +4,11 @@ Varias personas entran a un pedido compartido de una hamburguesería por link, c
 ítems y todos ven los cambios en vivo. Es un sistema **multi-tenant**: el mismo software sirve a
 varias cadenas, cada una con su marca, sucursales y menú.
 
-> Proyecto de portfolio. Las cadenas, sucursales y menús son inventados.
+La demo muestra una sola cadena, **Hamburguesería Test**. El seed carga una segunda (Smashlab) que
+no aparece en la UI: existe para los tests de aislamiento entre cadenas.
+
+> Proyecto de portfolio. Las cadenas, sucursales y menús son inventados. Las fotos de productos son
+> de Pexels (ver [CREDITS.md](CREDITS.md)).
 
 _README en construcción: se completa en la fase 7 con demo, diagrama y guía completa._
 
@@ -24,9 +28,10 @@ Los tests de integración usan su propia base (`pedido_test`), así no ensucian 
 npm run dev:web        # front en http://localhost:5173 (habla con nginx → las 2 instancias)
 npm run simulate       # N bots operando a la vez; al final verifica que todos quedaron iguales
 npm run e2e            # Playwright: 3 navegadores, desconexión + resync, cierre y envío
-npm run screenshots    # capturas de las pantallas principales en demo/screenshots
-npm run record-demo    # video de 3 celulares lado a lado: demo/demo.mp4 y demo/demo.gif
+npm run screenshots    # capturas de las pantallas principales en demo/screenshots (con dev:web corriendo)
 ```
+
+El e2e levanta siempre su propio servidor de Vite (no reutiliza uno que ya esté corriendo).
 
 `npm run simulate -- --code ABC234` suma los bots a un pedido que tengas abierto en el navegador,
 para verlos operar en vivo. Con `--urls http://localhost:3001,http://localhost:3002` cada bot se
@@ -109,3 +114,29 @@ instancia, no hace falta compartir ese contador. Los eventos que exceden el lím
 se responden con `RATE_LIMITED`. Esa respuesta no consulta la versión, para no cargar la base
 justo cuando alguien está inundando. Los endpoints HTTP públicos (preview y unirse) sí tienen un
 rate limit por IP compartido en Redis, porque cada request puede caer en otra instancia.
+
+## Interfaz
+
+- **React + Vite + Tailwind v4**, con [shadcn/ui](https://ui.shadcn.com) como base de componentes y un
+  **tema propio** (`apps/web/src/index.css`): un solo color de acento (el de la cadena), el resto
+  blanco, negro y grises; radios de 6 a 12 px; sin degradés ni sombras de color; una sola familia
+  tipográfica (Archivo, variable en peso y ancho: la versión condensada arma el logo de texto).
+- **[Vaul](https://vaul.emilkowal.ski)** para los bottom sheets (detalle de producto y resumen final).
+  ⚠️ Vaul está **sin mantenimiento** ("This repo is unmaintained", según su README). Funciona con
+  React 19 y alcanza para la demo; la alternativa sería el `Drawer` actual de shadcn/ui, que ya no
+  usa Vaul sino Base UI.
+- **[Sonner](https://sonner.emilkowal.ski)** para avisos discretos: qué agregó otra persona, cierre
+  del pedido y rechazos del server.
+- **[Motion](https://motion.dev)** para el resaltado de cambios remotos (fondo suave que se desvanece
+  en ~1 s, con el avatar de quien hizo el cambio) y la entrada y salida de ítems.
+
+### Modo debug
+
+La UI pública no muestra herramientas de desarrollo. Con `?debug=1` (queda recordado en la
+pestaña; `?debug=0` lo apaga) aparecen:
+
+- la pestaña **Actividad**, con cada evento y su número de versión, desconexiones y resyncs;
+- el botón **Simular desconexión**, que corta el socket unos segundos para ver el resync;
+- la vista de **cocina** de cada sucursal: `/t/hamburgueseria-test/branch/<id>/kitchen?debug=1`.
+
+El e2e usa este modo; las capturas, no.

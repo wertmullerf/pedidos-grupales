@@ -82,7 +82,7 @@ describe('tiempo real', () => {
       `SELECT t.id AS tenant_id,
               (SELECT id FROM branches WHERE tenant_id = t.id AND is_open LIMIT 1) AS branch,
               (SELECT id FROM menu_items WHERE tenant_id = t.id AND available LIMIT 1) AS item
-       FROM tenants t WHERE t.slug = 'brasaburg'`,
+       FROM tenants t WHERE t.slug = 'hamburgueseria-test'`,
     );
     ({ tenant_id: tenantId, branch: branchId, item: menuItemId } = rows[0]!);
   });
@@ -96,7 +96,7 @@ describe('tiempo real', () => {
     await Promise.allSettled([pool.end(), redis.quit()]);
   });
 
-  function connectTo(instance: Instance, token: string, tenantSlug = 'brasaburg') {
+  function connectTo(instance: Instance, token: string, tenantSlug = 'hamburgueseria-test') {
     const c = new OrderConnection({ url: instance.url, tenantSlug, token });
     connections.push(c);
     return c;
@@ -105,10 +105,10 @@ describe('tiempo real', () => {
   /** Host crea el pedido en server-1, el invitado se une en server-2, y cada uno se conecta a "su" instancia. */
   async function setup() {
     const created = await request(server1.url)
-      .post('/api/t/brasaburg/orders')
+      .post('/api/t/hamburgueseria-test/orders')
       .send({ branchId, name: 'Ana' });
     const joined = await request(server2.url)
-      .post(`/api/t/brasaburg/orders/${created.body.code}/join`)
+      .post(`/api/t/hamburgueseria-test/orders/${created.body.code}/join`)
       .send({ name: 'Beto' });
     const host = connectTo(server1, created.body.token);
     const guest = connectTo(server2, joined.body.token);
@@ -124,7 +124,7 @@ describe('tiempo real', () => {
 
   async function serverSnapshot(code: string, token: string) {
     const res = await request(server1.url)
-      .get(`/api/t/brasaburg/orders/${code}/snapshot`)
+      .get(`/api/t/hamburgueseria-test/orders/${code}/snapshot`)
       .set('Authorization', `Bearer ${token}`);
     return res.body as OrderSnapshot;
   }
@@ -167,7 +167,7 @@ describe('tiempo real', () => {
     it('un participante que se une por REST aparece en vivo para los conectados', async () => {
       const { code, host, guest } = await setup();
       await request(server2.url)
-        .post(`/api/t/brasaburg/orders/${code}/join`)
+        .post(`/api/t/hamburgueseria-test/orders/${code}/join`)
         .send({ name: 'Cata' });
       await waitFor(
         () => host.store.state?.participants.length === 3,
@@ -183,7 +183,7 @@ describe('tiempo real', () => {
   describe('autenticación del handshake', () => {
     it('rechaza un token de otra cadena al unirse', async () => {
       const created = await request(server1.url)
-        .post('/api/t/brasaburg/orders')
+        .post('/api/t/hamburgueseria-test/orders')
         .send({ branchId, name: 'Ana' });
       const intruder = connectTo(server2, created.body.token, 'smashlab');
       await expect(intruder.connect()).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -192,7 +192,7 @@ describe('tiempo real', () => {
 
     it('rechaza sin token, con token vencido y con cadena inexistente', async () => {
       const created = await request(server1.url)
-        .post('/api/t/brasaburg/orders')
+        .post('/api/t/hamburgueseria-test/orders')
         .send({ branchId, name: 'Ana' });
       const expired = signToken(
         verifyToken(created.body.token, TEST_TOKEN_SECRET)!,
@@ -339,7 +339,7 @@ describe('tiempo real', () => {
       });
       try {
         const created = await request(limited.url)
-          .post('/api/t/brasaburg/orders')
+          .post('/api/t/hamburgueseria-test/orders')
           .send({ branchId, name: 'Ana' });
         const c = connectTo(limited, created.body.token);
         await c.connect(); // consume 1 (el resync inicial)

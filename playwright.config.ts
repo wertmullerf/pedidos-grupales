@@ -16,7 +16,8 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev -w apps/web -- --strictPort',
     url: 'http://localhost:5173',
-    reuseExistingServer: true,
+    // Siempre un server propio: reusar uno viejo (con otra config) ya nos hizo fallar el e2e.
+    reuseExistingServer: false,
     timeout: 60_000,
   },
 });

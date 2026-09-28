@@ -24,6 +24,8 @@ export interface MenuItem {
   description: string;
   priceCents: number;
   available: boolean;
+  /** Foto cuadrada del producto (ruta pública del front) o null. */
+  imageUrl: string | null;
 }
 
 const ParticipantName = z.string().trim().min(1).max(40);

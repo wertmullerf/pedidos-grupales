@@ -33,7 +33,8 @@ export class CatalogRepo {
 
   async listMenu(): Promise<MenuItem[]> {
     const { rows } = await this.pool.query<MenuItem>(
-      `SELECT id, category, name, description, price_cents AS "priceCents", available
+      `SELECT id, category, name, description, price_cents AS "priceCents", available,
+              image_url AS "imageUrl"
        FROM menu_items WHERE tenant_id = $1 ORDER BY category, name`,
       [this.tenantId],
     );

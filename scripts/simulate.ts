@@ -1,7 +1,7 @@
 // Simulación de carga: N bots se unen a un pedido y agregan/quitan ítems al azar en paralelo.
 // Al final verifica que todos los clientes terminaron con exactamente el mismo estado que el server.
 //
-//   npm run simulate                         # pedido nuevo en brasaburg, 6 bots, 20 s
+//   npm run simulate                         # pedido nuevo en hamburgueseria-test, 6 bots, 20 s
 //   npm run simulate -- --code ABC234        # sobre un pedido abierto en el navegador (para verlo en vivo)
 //   npm run simulate -- --bots 10 --seconds 30 --tenant smashlab
 //   npm run simulate -- --urls http://localhost:3001,http://localhost:3002   # directo a cada instancia
@@ -11,7 +11,7 @@ import type { JoinResponse, MenuItem, OrderSnapshot } from '@pedido/shared';
 
 const { values: args } = parseArgs({
   options: {
-    tenant: { type: 'string', default: 'brasaburg' },
+    tenant: { type: 'string', default: 'hamburgueseria-test' },
     code: { type: 'string' },
     bots: { type: 'string', default: '6' },
     seconds: { type: 'string', default: '20' },

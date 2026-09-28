@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Brasaburg">
-  <rect width="64" height="64" rx="16" fill="#D9480F"/>
-  <path d="M32 7c2.6 6 9.5 8.6 9.5 16.4 0 3.4-1.6 6-3.6 7.4.5-3-1-5.8-3.4-7.1.4 3.3-1.5 5.2-3.3 5.9-2.6-1-4.3-3.6-3.6-7.2-3.5 2.1-5 5.1-4.6 8.4-2.3-1.4-3.9-4-3.9-7.4C19.1 16.8 29 13.5 32 7z" fill="#FFD43B"/>
-  <path d="M15 38.5C15 31.6 22.6 27 32 27s17 4.6 17 11.5z" fill="#FFF4E6"/>
-  <circle cx="25" cy="33" r="1.2" fill="#D9480F"/><circle cx="32" cy="31" r="1.2" fill="#D9480F"/><circle cx="39" cy="33" r="1.2" fill="#D9480F"/>
-  <rect x="13" y="40" width="38" height="5.5" rx="2.75" fill="#5C2B0F"/>
-  <path d="M14 47.5h36a0 0 0 0 1 0 0c0 4.4-3.6 8-8 8H22c-4.4 0-8-3.6-8-8z" fill="#FFF4E6"/>
-</svg>

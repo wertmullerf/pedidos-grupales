@@ -22,7 +22,7 @@ describe('schema: FKs compuestas por tenant', () => {
   }
 
   beforeAll(async () => {
-    a = await tenantFixture('brasaburg');
+    a = await tenantFixture('hamburgueseria-test');
     b = await tenantFixture('smashlab');
   });
   afterAll(() => pool.end());

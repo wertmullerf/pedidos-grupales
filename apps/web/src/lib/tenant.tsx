@@ -1,8 +1,11 @@
 import type { TenantInfo } from '@pedido/shared';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Outlet, useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import { api, ApiError } from './api';
-import styles from './tenant.module.css';
+
+/** La cadena que abre la app: no hay selector de comercio. */
+export const DEFAULT_TENANT = 'hamburgueseria-test';
 
 const TenantContext = createContext<TenantInfo | null>(null);
 
@@ -12,20 +15,7 @@ export function useTenant(): TenantInfo {
   return tenant;
 }
 
-/** Aplica el color de la cadena a toda la app vía CSS variables. */
-export function useBrandColor(color: string | undefined) {
-  useEffect(() => {
-    if (!color) return;
-    const root = document.documentElement;
-    root.style.setProperty('--brand', color);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
-    return () => {
-      root.style.removeProperty('--brand');
-    };
-  }, [color]);
-}
-
-/** Rutas /t/:tenantSlug/*: carga la cadena y tiñe la app con su marca. */
+/** Rutas /t/:tenantSlug/*: carga la cadena y usa su color como único acento de la app. */
 export function TenantLayout() {
   const { tenantSlug = '' } = useParams();
   const [tenant, setTenant] = useState<TenantInfo | null>(null);
@@ -36,30 +26,35 @@ export function TenantLayout() {
     api.tenant(tenantSlug).then(
       (t) => alive && setTenant(t),
       (e: ApiError) =>
-        alive && setError(e.code === 'TENANT_NOT_FOUND' ? 'Esta cadena no existe' : e.message),
+        alive && setError(e.code === 'TENANT_NOT_FOUND' ? 'No encontramos este local' : e.message),
     );
     return () => {
       alive = false;
     };
   }, [tenantSlug]);
 
-  useBrandColor(tenant?.primaryColor);
-
   useEffect(() => {
-    if (tenant) document.title = `${tenant.name} · Pedido grupal`;
+    if (!tenant) return;
+    const root = document.documentElement;
+    root.style.setProperty('--brand', tenant.primaryColor);
+    document.title = `${tenant.name} · Pedido grupal`;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#ffffff');
+    return () => {
+      root.style.removeProperty('--brand');
+    };
   }, [tenant]);
 
   if (error) {
     return (
-      <div className={styles.center}>
-        <p className={styles.errorTitle}>{error}</p>
-        <a className="btn btn-secondary" href="/">
-          Volver al inicio
-        </a>
+      <div className="grid min-h-dvh place-content-center gap-4 p-6 text-center">
+        <p className="text-lg font-semibold">{error}</p>
+        <Button variant="outline" asChild>
+          <a href={`/t/${DEFAULT_TENANT}`}>Volver al inicio</a>
+        </Button>
       </div>
     );
   }
-  if (!tenant) return <div className={styles.center} aria-busy="true" />;
+  if (!tenant) return <div className="min-h-dvh" aria-busy="true" />;
 
   return (
     <TenantContext.Provider value={tenant}>

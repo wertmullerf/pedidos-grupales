@@ -1,3 +1,5 @@
+import path from 'node:path';
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
@@ -5,8 +7,9 @@ import { defineConfig } from 'vite';
 const backend = process.env.VITE_BACKEND ?? 'http://localhost:8080';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: {
+    alias: { '@': path.resolve(import.meta.dirname, './src') },
     // Los paquetes del monorepo se consumen desde sus fuentes TS.
     conditions: ['source', 'module', 'browser', 'development|production'],
   },

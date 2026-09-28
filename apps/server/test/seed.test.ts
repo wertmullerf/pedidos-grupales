@@ -13,8 +13,10 @@ describe('uuidV5', () => {
   });
 
   it('es determinista', () => {
-    expect(uuidV5('menu:brasaburg:Gaseosa')).toBe(uuidV5('menu:brasaburg:Gaseosa'));
-    expect(uuidV5('menu:brasaburg:Gaseosa')).not.toBe(uuidV5('menu:smashlab:Gaseosa'));
+    expect(uuidV5('menu:hamburgueseria-test:Gaseosa')).toBe(
+      uuidV5('menu:hamburgueseria-test:Gaseosa'),
+    );
+    expect(uuidV5('menu:hamburgueseria-test:Gaseosa')).not.toBe(uuidV5('menu:smashlab:Gaseosa'));
   });
 });
 
@@ -29,7 +31,7 @@ describe('seed', () => {
              (SELECT count(*)::int FROM menu_items m WHERE m.tenant_id = t.id) AS items
       FROM tenants t ORDER BY t.slug`);
     expect(rows).toEqual([
-      { slug: 'brasaburg', branches: 2, items: 7 },
+      { slug: 'hamburgueseria-test', branches: 2, items: 7 },
       { slug: 'smashlab', branches: 2, items: 7 },
     ]);
   });

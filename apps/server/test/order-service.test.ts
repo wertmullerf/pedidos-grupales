@@ -23,7 +23,7 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
   beforeAll(async () => {
     const tenants = await pool.query<{ slug: string; id: string }>('SELECT slug, id FROM tenants');
     const bySlug = Object.fromEntries(tenants.rows.map((t) => [t.slug, t.id]));
-    tenantId = bySlug.brasaburg!;
+    tenantId = bySlug['hamburgueseria-test']!;
     otherTenantId = bySlug.smashlab!;
 
     const branch = await pool.query<{ id: string }>(
@@ -71,7 +71,7 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
   async function addBurger(actor: ParticipantToken, quantity = 1) {
     const res = await service.addItem(actor, {
       ...op(),
-      menuItemId: menu['Brasa Clásica']!.id,
+      menuItemId: menu['Clásica']!.id,
       quantity,
     });
     return addedItemId(res.event);
@@ -111,7 +111,7 @@ describe('OrderService: mutaciones con concurrencia segura', () => {
 
     it('el mismo producto agregado dos veces son dos líneas (p. ej. con notas distintas)', async () => {
       const { code, orderId, host } = await setupOrder();
-      const menuItemId = menu['Brasa Clásica']!.id;
+      const menuItemId = menu['Clásica']!.id;
       await service.addItem(host, { ...op(), menuItemId });
       await service.addItem(host, { ...op(), menuItemId, notes: 'sin cebolla' });
 

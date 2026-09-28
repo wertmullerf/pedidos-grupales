@@ -20,7 +20,6 @@
     "db:seed": "npm run db:seed -w apps/server",
     "simulate": "tsx --conditions=source scripts/simulate.ts",
     "screenshots": "tsx --conditions=source scripts/screenshots.ts",
-    "record-demo": "tsx --conditions=source scripts/record-demo.ts",
     "e2e": "playwright test"
   },
   "devDependencies": {
@@ -28,7 +27,6 @@
     "@playwright/test": "^1.63.0",
     "eslint": "^10.11.0",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "ffmpeg-static": "^5.3.0",
     "globals": "^17.12.0",
     "prettier": "^3.9.9",
     "tsx": "^4.23.15",
@@ -36,7 +34,6 @@
     "typescript-eslint": "^8.70.1"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true,
-    "ffmpeg-static@5.3.0": true
+    "esbuild@0.28.2": true
   }
 }

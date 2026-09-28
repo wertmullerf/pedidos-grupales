@@ -11,7 +11,7 @@ describe('OrderRepo.createOrder: colisión de códigos', () => {
   beforeAll(async () => {
     const { rows } = await pool.query<{ tenant_id: string; id: string }>(
       `SELECT b.tenant_id, b.id FROM branches b JOIN tenants t ON t.id = b.tenant_id
-       WHERE t.slug = 'brasaburg' AND b.is_open LIMIT 1`,
+       WHERE t.slug = 'hamburgueseria-test' AND b.is_open LIMIT 1`,
     );
     tenantId = rows[0]!.tenant_id;
     branchId = rows[0]!.id;

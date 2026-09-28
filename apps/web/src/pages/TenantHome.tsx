@@ -1,13 +1,17 @@
 import type { Branch } from '@pedido/shared';
 import { ORDER_CODE_LENGTH } from '@pedido/shared';
+import { cn } from 'cn';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BrandMark } from '../components/BrandMark';
-import { api, ApiError } from '../lib/api';
-import { saveIdentity } from '../lib/identity';
-import { rejectionMessage } from '../lib/messages';
-import { useTenant } from '../lib/tenant';
-import styles from './TenantHome.module.css';
+import { Wordmark } from '@/components/Wordmark';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { api, ApiError } from '@/lib/api';
+import { saveIdentity } from '@/lib/identity';
+import { rejectionMessage } from '@/lib/messages';
+import { useTenant } from '@/lib/tenant';
 
 export function TenantHome() {
   const tenant = useTenant();
@@ -52,26 +56,28 @@ export function TenantHome() {
   }
 
   return (
-    <main className={styles.page}>
-      <header className={styles.hero}>
-        <BrandMark tenant={tenant} size={72} />
-        <h1 className={styles.title}>{tenant.name}</h1>
-        <p className={styles.subtitle}>
-          Pedí en grupo: cada uno elige lo suyo y todos lo ven en vivo.
+    <main className="mx-auto min-h-dvh max-w-md px-5 pb-12">
+      <header className="pt-12 pb-8">
+        <Wordmark name={tenant.name} className="text-[34px]" />
+        <p className="mt-4 text-[15px] leading-relaxed text-muted-foreground">
+          Pedido grupal: cada uno elige lo suyo desde su celular y todos lo ven al instante.
         </p>
       </header>
 
-      <form className={`card ${styles.section}`} onSubmit={create}>
-        <h2 className={styles.sectionTitle}>Armá un pedido grupal</h2>
+      <form onSubmit={create} className="space-y-6">
+        <h1 className="text-xl font-bold tracking-tight">Armá un pedido grupal</h1>
 
-        <fieldset className={styles.branches}>
-          <legend className={styles.label}>¿A qué sucursal?</legend>
-          {!branches && <div className={styles.skeleton} />}
+        <fieldset className="space-y-2">
+          <legend className="mb-2 text-sm font-medium text-muted-foreground">Sucursal</legend>
+          {!branches && <Skeleton className="h-32 rounded-lg" />}
           {branches?.map((b) => (
             <label
               key={b.id}
-              className={`${styles.branch} ${branchId === b.id ? styles.branchActive : ''}`}
-              data-closed={!b.isOpen || undefined}
+              className={cn(
+                'flex cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 transition-colors',
+                branchId === b.id && 'border-foreground',
+                !b.isOpen && 'cursor-not-allowed opacity-50',
+              )}
             >
               <input
                 type="radio"
@@ -80,61 +86,65 @@ export function TenantHome() {
                 checked={branchId === b.id}
                 disabled={!b.isOpen}
                 onChange={() => setBranchId(b.id)}
-                className="visually-hidden"
+                className="size-4 accent-foreground"
               />
-              <span className={styles.branchName}>{b.name}</span>
-              <span className={styles.branchAddress}>{b.address}</span>
-              {!b.isOpen && <span className={styles.closed}>Cerrada ahora</span>}
+              <span className="flex-1">
+                <span className="block font-semibold">{b.name}</span>
+                <span className="block text-sm text-muted-foreground">{b.address}</span>
+              </span>
+              {!b.isOpen && <span className="text-xs font-medium">Cerrada</span>}
             </label>
           ))}
         </fieldset>
 
-        <label className={styles.label} htmlFor="host-name">
-          ¿Cómo te llamás?
-        </label>
-        <input
-          id="host-name"
-          className="input"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Tu nombre"
-          maxLength={40}
-          autoComplete="given-name"
-        />
+        <div className="space-y-2">
+          <label htmlFor="host-name" className="text-sm font-medium text-muted-foreground">
+            Tu nombre
+          </label>
+          <Input
+            id="host-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Tu nombre"
+            maxLength={40}
+            autoComplete="given-name"
+          />
+        </div>
+
         {error && (
-          <p className={styles.error} role="alert">
+          <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
         )}
-        <button
-          className="btn btn-primary btn-block"
-          disabled={!branchId || !name.trim() || creating}
-        >
+        <Button size="lg" className="w-full" disabled={!branchId || !name.trim() || creating}>
           {creating ? 'Creando…' : 'Crear pedido grupal'}
-        </button>
+        </Button>
       </form>
 
-      <form className={`card ${styles.section}`} onSubmit={join}>
-        <h2 className={styles.sectionTitle}>¿Te pasaron un código?</h2>
-        <div className={styles.joinRow}>
-          <input
-            className={`input ${styles.codeInput}`}
+      <Separator className="my-10" />
+
+      <form onSubmit={join} className="space-y-3">
+        <h2 className="text-base font-bold">¿Te pasaron un código?</h2>
+        <div className="flex gap-2">
+          <Input
             value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             placeholder="ABC234"
             maxLength={ORDER_CODE_LENGTH}
             aria-label="Código del pedido"
             autoCapitalize="characters"
+            className="font-semibold tracking-[0.2em] uppercase"
           />
-          <button className="btn btn-secondary" disabled={code.trim().length !== ORDER_CODE_LENGTH}>
+          <Button
+            type="submit"
+            size="lg"
+            variant="outline"
+            disabled={code.trim().length !== ORDER_CODE_LENGTH}
+          >
             Unirme
-          </button>
+          </Button>
         </div>
       </form>
-
-      <a className={styles.back} href="/">
-        ← Ver todas las cadenas de la demo
-      </a>
     </main>
   );
 }

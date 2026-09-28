@@ -13,8 +13,18 @@ export const MOBILE: BrowserContextOptions = {
   locale: 'es-AR',
 };
 
-export async function newPhone(browser: Browser, extra: BrowserContextOptions = {}) {
+export const TENANT = 'hamburgueseria-test';
+
+/**
+ * Un celular. Con `debug` la app muestra las vistas de desarrollo (actividad, simular desconexión,
+ * cocina), que la UI pública oculta: el e2e las usa; las capturas y el video, no.
+ */
+export async function newPhone(
+  browser: Browser,
+  { debug = false, ...extra }: BrowserContextOptions & { debug?: boolean } = {},
+) {
   const context = await browser.newContext({ ...MOBILE, baseURL: BASE_URL, ...extra });
+  if (debug) await context.addInitScript(() => sessionStorage.setItem('pedido:debug', '1'));
   const page = await context.newPage();
   return { context, page };
 }
@@ -79,35 +89,31 @@ export async function settle(page: Page, ms = 900) {
 
 /** Lo que cada pantalla muestra del pedido del grupo, para comparar entre participantes. */
 export async function readGroupOrder(page: Page) {
-  const parts = page.getByTestId('part');
-  const result: Record<string, { total: string; lines: string[] }> = {};
-  for (const part of await parts.all()) {
-    const person = (await part.getAttribute('data-person')) ?? '?';
-    const total = clean(await part.getByTestId('part-total').textContent());
-    const lines: string[] = [];
-    for (const line of await part.getByTestId('line').all()) {
-      const name = (await line.locator('[class*="lineName"]').textContent())?.trim() ?? '';
-      const qtyEl = line.locator('[class*="lineQty"], [class*="stepperQty"]').first();
-      const qty = (await qtyEl.textContent())?.replace('×', '').trim() ?? '';
-      const notesInput = line.locator('input');
-      const notesText = line.locator('[class*="lineNotes"]');
-      const notes =
-        (await notesInput.count()) > 0
-          ? await notesInput.inputValue()
-          : (await notesText.count()) > 0
-            ? ((await notesText.textContent()) ?? '')
-            : '';
-      lines.push(`${qty}× ${name}${notes ? ` (${notes})` : ''}`);
+  // Una sola lectura atómica del DOM: con locators por línea, una línea que se va (p. ej. un cambio
+  // rechazado que se revierte con animación de salida) podía desaparecer entre encontrarla y
+  // leerla, y el locator quedaba esperando hasta el timeout del test.
+  const raw = await page.evaluate(() => {
+    const text = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+    const parts: Record<string, { total: string; lines: string[] }> = {};
+    for (const part of document.querySelectorAll('[data-testid="part"]')) {
+      const lines: string[] = [];
+      for (const line of part.querySelectorAll('[data-testid="line"]')) {
+        const name = text(line.querySelector('[data-testid="line-name"]'));
+        const qty = text(line.querySelector('[data-testid="qty"]')).replace('×', '');
+        const input = line.querySelector('input');
+        const notes = input ? input.value : text(line.querySelector('[data-testid="line-notes"]'));
+        lines.push(qty + '× ' + name + (notes ? ' (' + notes + ')' : ''));
+      }
+      parts[part.getAttribute('data-person') ?? '?'] = {
+        total: text(part.querySelector('[data-testid="part-total"]')),
+        lines: lines.sort(),
+      };
     }
-    result[person] = { total, lines: lines.sort() };
-  }
-  const groupTotal = clean(await page.getByTestId('group-total').textContent());
+    return { groupTotal: text(document.querySelector('[data-testid="group-total"]')), parts };
+  });
   // Cada pantalla muestra "Tu parte" primero: ordenamos por persona para poder comparar.
-  const sorted = Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)));
-  return { groupTotal, parts: sorted };
-}
-
-/** Intl es-AR separa "$" del número con un espacio no separable: lo normalizamos. */
-function clean(text: string | null) {
-  return (text ?? '').replace(/\s+/g, ' ').trim();
+  const parts = Object.fromEntries(
+    Object.entries(raw.parts).sort(([a], [b]) => a.localeCompare(b)),
+  );
+  return { groupTotal: raw.groupTotal, parts };
 }

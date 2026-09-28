@@ -2,13 +2,13 @@ import { KitchenConnection } from '@pedido/client';
 import type { Branch, KitchenOrder } from '@pedido/shared';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { BrandMark } from '../components/BrandMark';
-import { api } from '../lib/api';
-import { formatMoney, formatTime, plural } from '../lib/format';
-import { useTenant } from '../lib/tenant';
-import styles from './KitchenPage.module.css';
+import { cn } from 'cn';
+import { Wordmark } from '@/components/Wordmark';
+import { api } from '@/lib/api';
+import { formatMoney, formatTime, plural } from '@/lib/format';
+import { useTenant } from '@/lib/tenant';
 
-/** Vista de sucursal: los pedidos grupales enviados llegan en vivo. Muestra que el flujo termina en el local. */
+/** Vista de sucursal (solo modo debug): los pedidos grupales enviados llegan en vivo. Muestra que el flujo termina en el local. */
 export function KitchenPage() {
   const tenant = useTenant();
   const branchId = useParams().branchId ?? '';
@@ -60,60 +60,77 @@ export function KitchenPage() {
   }, [tenant.slug, branchId]);
 
   return (
-    <main className={styles.page}>
-      <header className={styles.header}>
-        <BrandMark tenant={tenant} size={44} />
-        <div className={styles.headerText}>
-          <h1>Cocina · {branch?.name ?? tenant.name}</h1>
-          <p>Pedidos grupales recibidos</p>
+    <main className="min-h-dvh bg-neutral-100 pb-10">
+      <header className="sticky top-0 z-10 flex items-center gap-4 border-b bg-background px-6 py-4">
+        <Wordmark name={tenant.name} className="text-xl" />
+        <div className="flex-1 border-l pl-4 leading-tight">
+          <h1 className="font-semibold">Cocina · Sucursal {branch?.name ?? ''}</h1>
+          <p className="text-xs text-muted-foreground">Pedidos grupales recibidos</p>
         </div>
-        <span className={styles.live} data-online={online || undefined}>
+        <span
+          className={cn(
+            'text-xs font-medium',
+            online ? 'text-emerald-600' : 'text-muted-foreground',
+          )}
+        >
           {online ? 'En vivo' : 'Conectando…'}
         </span>
       </header>
 
       {error ? (
-        <p className={styles.empty}>{error}</p>
+        <p className="p-10 text-center">{error}</p>
       ) : orders.length === 0 ? (
-        <div className={styles.empty}>
-          <span aria-hidden>🧑‍🍳</span>
-          <p>Todavía no llegó ningún pedido.</p>
-          <p className={styles.hint}>
+        <div className="grid justify-items-center gap-2 p-16 text-center">
+          <p className="font-semibold">Todavía no llegó ningún pedido.</p>
+          <p className="max-w-sm text-sm text-muted-foreground">
             Cuando un grupo envíe su pedido a esta sucursal, aparece acá al instante.
           </p>
         </div>
       ) : (
-        <div className={styles.tickets}>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] items-start gap-4 p-6">
           {orders.map((order) => (
             <article
               key={order.code}
-              className={styles.ticket}
+              className={cn(
+                'rounded-lg border bg-background p-4',
+                fresh.has(order.code) && 'border-primary',
+              )}
               data-fresh={fresh.has(order.code) || undefined}
               data-testid="kitchen-ticket"
             >
-              <header className={styles.ticketHeader}>
-                <span className={styles.ticketCode}>#{order.code}</span>
-                {fresh.has(order.code) && <span className={styles.newTag}>Nuevo</span>}
-                <time>{formatTime(order.submittedAt)}</time>
+              <header className="flex items-center gap-2 border-b border-dashed pb-2">
+                <span className="text-lg font-bold tracking-wider">#{order.code}</span>
+                {fresh.has(order.code) && (
+                  <span className="rounded-sm bg-primary px-1.5 py-0.5 text-[11px] font-semibold text-primary-foreground">
+                    Nuevo
+                  </span>
+                )}
+                <time className="ml-auto text-sm text-muted-foreground">
+                  {formatTime(order.submittedAt)}
+                </time>
               </header>
               {order.participants.map((p) => {
                 const items = order.items.filter((i) => i.participantId === p.id);
                 if (items.length === 0) return null;
                 return (
-                  <section key={p.id} className={styles.person}>
-                    <h2 style={{ color: p.color }}>{p.name}</h2>
-                    <ul>
+                  <section key={p.id} className="pt-3">
+                    <h2 className="text-xs font-bold uppercase" style={{ color: p.color }}>
+                      {p.name}
+                    </h2>
+                    <ul className="mt-1 space-y-1">
                       {items.map((i) => (
                         <li key={i.id}>
                           <strong>{i.quantity}×</strong> {i.name}
-                          {i.notes && <span className={styles.note}>{i.notes}</span>}
+                          {i.notes && (
+                            <span className="block pl-6 text-sm font-semibold">{i.notes}</span>
+                          )}
                         </li>
                       ))}
                     </ul>
                   </section>
                 );
               })}
-              <footer className={styles.ticketFooter}>
+              <footer className="mt-3 flex justify-between border-t border-dashed pt-2 text-sm text-muted-foreground">
                 <span>
                   {plural(
                     order.items.reduce((n, i) => n + i.quantity, 0),
@@ -121,7 +138,7 @@ export function KitchenPage() {
                     'productos',
                   )}
                 </span>
-                <strong>{formatMoney(order.totalCents)}</strong>
+                <strong className="text-foreground">{formatMoney(order.totalCents)}</strong>
               </footer>
             </article>
           ))}

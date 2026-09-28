@@ -1,7 +1,8 @@
 import type { OrderStatus } from '@pedido/shared';
-import { formatMoney } from '../../lib/format';
-import styles from './order.module.css';
+import { Button } from '@/components/ui/button';
+import { formatMoney } from '@/lib/format';
 
+/** Resumen siempre visible: total del grupo y cuánto pagás vos. */
 export function SummaryBar({
   totalCents,
   mineCents,
@@ -24,35 +25,37 @@ export function SummaryBar({
   onViewOrder?: () => void;
 }) {
   return (
-    <div className={styles.summaryBar} data-testid="summary">
-      <div className={styles.summaryText}>
-        <span className={styles.summaryTotal}>
-          Total del grupo <strong data-testid="group-total">{formatMoney(totalCents)}</strong>
-        </span>
-        <span className={styles.summaryMine}>
-          Vos pagás <strong data-testid="my-total">{formatMoney(mineCents)}</strong>
-        </span>
+    <div
+      data-testid="summary"
+      className="fixed inset-x-0 bottom-0 z-30 border-t bg-background pb-[env(safe-area-inset-bottom)]"
+    >
+      <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 lg:px-6">
+        <div className="min-w-0 flex-1 leading-tight">
+          <p className="text-[13px] text-muted-foreground">
+            Total del grupo{' '}
+            <span className="tabular font-semibold text-foreground" data-testid="group-total">
+              {formatMoney(totalCents)}
+            </span>
+          </p>
+          <p className="text-lg font-semibold">
+            Vos pagás{' '}
+            <span className="tabular font-bold" data-testid="my-total">
+              {formatMoney(mineCents)}
+            </span>
+          </p>
+        </div>
+        {isHost && status === 'open' && (
+          <Button onClick={onLock} disabled={busy || itemCount === 0}>
+            Cerrar pedido
+          </Button>
+        )}
+        {isHost && status === 'locked' && <Button onClick={onReview}>Ver resumen</Button>}
+        {!isHost && onViewOrder && (
+          <Button variant="outline" onClick={onViewOrder}>
+            Ver pedido · {itemCount}
+          </Button>
+        )}
       </div>
-      {isHost && status === 'open' && (
-        <button
-          className="btn btn-primary"
-          onClick={onLock}
-          disabled={busy || itemCount === 0}
-          title={itemCount === 0 ? 'Agreguen algo primero' : undefined}
-        >
-          Cerrar pedido
-        </button>
-      )}
-      {isHost && status === 'locked' && (
-        <button className="btn btn-primary" onClick={onReview}>
-          Ver resumen
-        </button>
-      )}
-      {!isHost && onViewOrder && (
-        <button className="btn btn-secondary" onClick={onViewOrder}>
-          Ver pedido · {itemCount}
-        </button>
-      )}
     </div>
   );
 }

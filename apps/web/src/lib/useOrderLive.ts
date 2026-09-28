@@ -7,8 +7,10 @@ import {
 } from '@pedido/client';
 import type { OrderEvent, OrderSnapshot, PresenceState } from '@pedido/shared';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { notifyError, notifyInfo, notifyRemote } from '@/components/order/notify';
 import type { Identity } from './identity';
 import { rejectionMessage } from './messages';
+import { record, recordPaint } from './recorder';
 
 type EntryBody =
   | { kind: 'event'; event: OrderEvent }
@@ -17,16 +19,13 @@ type EntryBody =
 
 export type ActivityEntry = EntryBody & { id: string; at: number };
 
-export interface Toast {
-  id: number;
-  text: string;
-  tone: 'warn' | 'info' | 'ok';
-}
-
 const MAX_ACTIVITY = 80;
-const FLASH_MS = 1600;
+const FLASH_MS = 1100;
 const SYNCED_BADGE_MS = 2800;
 const CHOOSING_IDLE_MS = 4000;
+
+/** Resaltados activos: quién hizo el último cambio de un ítem/participante y cuándo (re-dispara la animación). */
+export type FlashMap = ReadonlyMap<string, { by: string; at: number }>;
 
 /**
  * Conexión en vivo a un pedido para la UI: estado (optimista), conexión, presencia, actividad,
@@ -45,19 +44,12 @@ export function useOrderLive(tenantSlug: string, identity: Identity, onInvalidTo
   });
 
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
-  const [flash, setFlash] = useState<ReadonlySet<string>>(new Set());
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [flash, setFlash] = useState<FlashMap>(new Map());
   const [justSynced, setJustSynced] = useState(false);
   const onInvalidRef = useRef(onInvalidToken);
   useEffect(() => {
     onInvalidRef.current = onInvalidToken;
   });
-
-  const toast = useCallback((text: string, tone: Toast['tone'] = 'info') => {
-    const id = Date.now() + Math.random();
-    setToasts((t) => [...t.slice(-2), { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200);
-  }, []);
 
   useEffect(() => {
     const me = identity.participantId;
@@ -75,12 +67,15 @@ export function useOrderLive(tenantSlug: string, identity: Identity, onInvalidTo
         [{ ...entry, id: `${Date.now()}-${seq++}`, at: Date.now() }, ...a].slice(0, MAX_ACTIVITY),
       );
 
-    const highlight = (id: string) => {
-      setFlash((s) => new Set(s).add(id));
+    const highlight = (id: string, by: string) => {
+      const at = Date.now();
+      setFlash((m) => new Map(m).set(id, { by, at }));
       later(
         () =>
-          setFlash((s) => {
-            const next = new Set(s);
+          setFlash((m) => {
+            // Solo si no hubo un cambio más nuevo sobre el mismo elemento.
+            if (m.get(id)?.at !== at) return m;
+            const next = new Map(m);
             next.delete(id);
             return next;
           }),
@@ -88,16 +83,48 @@ export function useOrderLive(tenantSlug: string, identity: Identity, onInvalidTo
       );
     };
 
+    const person = (id: string) => conn.store.state?.participants.find((p) => p.id === id);
+
     const offApplied = conn.store.onApplied((event) => {
       push({ kind: 'event', event });
-      // Resaltamos solo lo que cambió otra persona: lo propio ya se vio al tocar.
-      if (event.type === 'participant_joined') {
-        if (event.payload.participant.id !== me) highlight(event.payload.participant.id);
-        return;
+      const by =
+        event.type === 'participant_joined' ? event.payload.participant.id : event.payload.by;
+      const itemId =
+        event.type === 'item_added'
+          ? event.payload.item.id
+          : 'itemId' in event.payload
+            ? event.payload.itemId
+            : null;
+      record({ kind: 'applied', version: event.version, type: event.type, by, itemId });
+      recordPaint({ version: event.version, type: event.type, by, itemId });
+
+      // Lo propio ya se vio al tocar: solo resaltamos y avisamos lo que hizo otra persona.
+      if (by === me) return;
+      const who = person(by);
+      switch (event.type) {
+        case 'participant_joined':
+          highlight(by, by);
+          notifyRemote(
+            `${event.payload.participant.name} se sumó al pedido`,
+            event.payload.participant,
+          );
+          break;
+        case 'item_added':
+          highlight(event.payload.item.id, by);
+          if (who) notifyRemote(`${who.name} agregó ${event.payload.item.name}`, who);
+          break;
+        case 'item_incremented':
+        case 'item_removed':
+        case 'item_notes_updated':
+          highlight(event.payload.itemId, by);
+          break;
+        case 'order_locked':
+          notifyRemote(`${who?.name ?? 'El host'} cerró el pedido`, who);
+          break;
+        case 'order_unlocked':
+          notifyRemote(`${who?.name ?? 'El host'} reabrió el pedido`, who);
+          break;
       }
-      if (event.payload.by === me) return;
-      if (event.type === 'item_added') highlight(event.payload.item.id);
-      else if ('itemId' in event.payload) highlight(event.payload.itemId);
     });
 
     const offResync = conn.onResync((info) => {
@@ -120,7 +147,7 @@ export function useOrderLive(tenantSlug: string, identity: Identity, onInvalidTo
       }
     });
 
-    const offReject = session.onReject((r) => toast(rejectionMessage(r.code, r.command), 'warn'));
+    const offReject = session.onReject((r) => notifyError(rejectionMessage(r.code, r.command)));
 
     conn.connect().catch((err: unknown) => {
       if (err instanceof ConnectionError && ['UNAUTHORIZED', 'FORBIDDEN'].includes(err.code)) {
@@ -137,7 +164,7 @@ export function useOrderLive(tenantSlug: string, identity: Identity, onInvalidTo
       void session.flush();
       conn.disconnect();
     };
-  }, [conn, session, identity.participantId, toast]);
+  }, [conn, session, identity.participantId]);
 
   const state = useSyncExternalStore<OrderSnapshot | null>(
     (l) => session.subscribe(l),
@@ -167,7 +194,7 @@ export function useOrderLive(tenantSlug: string, identity: Identity, onInvalidTo
     }, CHOOSING_IDLE_MS);
   }, [conn]);
 
-  /** Botón de la demo: corta el socket unos segundos y deja que el resync haga su trabajo. */
+  /** Solo modo debug: corta el socket unos segundos y deja que el resync haga su trabajo. */
   const simulateDisconnect = useCallback(
     (ms = 4000) => {
       conn.disconnect();
@@ -184,8 +211,8 @@ export function useOrderLive(tenantSlug: string, identity: Identity, onInvalidTo
     presence,
     activity,
     flash,
-    toasts,
-    toast,
+    notifyError,
+    notifyInfo,
     markChoosing,
     simulateDisconnect,
   };

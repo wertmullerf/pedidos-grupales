@@ -14,57 +14,66 @@ interface SeedMenuItem {
   description: string;
   price: number; // en pesos
   available?: boolean;
+  /** Foto en apps/web/public/products (ver CREDITS.md). */
+  imageUrl?: string;
 }
 
 interface SeedTenant {
   slug: string;
   name: string;
   primaryColor: string;
-  logoUrl: string;
+  /** null: la UI muestra el nombre como wordmark de texto. */
+  logoUrl: string | null;
   branches: { name: string; address: string; isOpen: boolean }[];
   menu: SeedMenuItem[];
 }
 
 export const SEED_TENANTS: SeedTenant[] = [
   {
-    slug: 'brasaburg',
-    name: 'Brasaburg',
-    primaryColor: '#D9480F',
-    logoUrl: '/logos/brasaburg.svg',
+    // La cadena de la demo: es la única que aparece en la UI.
+    slug: 'hamburgueseria-test',
+    name: 'Hamburguesería Test',
+    primaryColor: '#D93A26',
+    logoUrl: null,
     branches: [
-      { name: 'Brasaburg Palermo', address: 'Av. Inventada 1234, CABA', isOpen: true },
-      { name: 'Brasaburg Caballito', address: 'Calle Ficticia 567, CABA', isOpen: true },
+      { name: 'Palermo', address: 'Av. Inventada 1234, CABA', isOpen: true },
+      { name: 'Caballito', address: 'Calle Ficticia 567, CABA', isOpen: true },
     ],
     menu: [
       {
         category: 'Hamburguesas',
-        name: 'Brasa Clásica',
+        name: 'Clásica',
         description: 'Medallón a la parrilla, cheddar, lechuga y tomate',
         price: 9500,
+        imageUrl: '/products/clasica.webp',
       },
       {
         category: 'Hamburguesas',
         name: 'Doble Ahumada',
         description: 'Doble medallón, panceta ahumada y barbacoa',
         price: 12500,
+        imageUrl: '/products/doble-ahumada.webp',
       },
       {
         category: 'Hamburguesas',
         name: 'Veggie de Lentejas',
         description: 'Medallón de lentejas, rúcula y alioli',
         price: 9800,
+        imageUrl: '/products/veggie-de-lentejas.webp',
       },
       {
         category: 'Acompañamientos',
         name: 'Papas rústicas',
         description: 'Con piel, romero y sal gruesa',
         price: 4200,
+        imageUrl: '/products/papas-rusticas.webp',
       },
       {
         category: 'Acompañamientos',
         name: 'Aros de cebolla',
         description: 'Rebozados en cerveza',
         price: 4800,
+        imageUrl: '/products/aros-de-cebolla.webp',
         available: false,
       },
       {
@@ -72,15 +81,22 @@ export const SEED_TENANTS: SeedTenant[] = [
         name: 'Limonada de la casa',
         description: 'Menta y jengibre',
         price: 3200,
+        imageUrl: '/products/limonada.webp',
       },
-      { category: 'Bebidas', name: 'Gaseosa', description: 'Lata 354 ml', price: 2500 },
+      {
+        category: 'Bebidas',
+        name: 'Gaseosa',
+        description: 'Vaso de 500 ml con hielo',
+        price: 2500,
+        imageUrl: '/products/gaseosa.webp',
+      },
     ],
   },
   {
     slug: 'smashlab',
     name: 'Smashlab',
     primaryColor: '#2B8A3E',
-    logoUrl: '/logos/smashlab.svg',
+    logoUrl: null,
     branches: [
       { name: 'Smashlab Núñez', address: 'Pasaje Imaginario 89, CABA', isOpen: true },
       { name: 'Smashlab Belgrano', address: 'Av. de Prueba 2020, CABA', isOpen: false },
@@ -142,11 +158,13 @@ export async function seed(pool: pg.Pool): Promise<void> {
 
       for (const m of t.menu) {
         await client.query(
-          `INSERT INTO menu_items (id, tenant_id, category, name, description, price_cents, available)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `INSERT INTO menu_items
+             (id, tenant_id, category, name, description, price_cents, available, image_url)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (id) DO UPDATE
              SET category = EXCLUDED.category, description = EXCLUDED.description,
-                 price_cents = EXCLUDED.price_cents, available = EXCLUDED.available`,
+                 price_cents = EXCLUDED.price_cents, available = EXCLUDED.available,
+                 image_url = EXCLUDED.image_url`,
           [
             uuidV5(`menu:${t.slug}:${m.name}`),
             tenantId,
@@ -155,6 +173,7 @@ export async function seed(pool: pg.Pool): Promise<void> {
             m.description,
             m.price * 100,
             m.available ?? true,
+            m.imageUrl ?? null,
           ],
         );
       }

@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Smashlab">
-  <rect width="64" height="64" rx="16" fill="#2B8A3E"/>
-  <path d="M32 8.5l19.5 11.25v22.5L32 53.5 12.5 42.25v-22.5z" fill="none" stroke="#D3F9D8" stroke-width="3" stroke-linejoin="round"/>
-  <path d="M20 29.5c0-4.7 5.4-8 12-8s12 3.3 12 8z" fill="#FFE8CC"/>
-  <path d="M18 32.5h28l-2.5 3.2H20.5z" fill="#FAB005"/>
-  <rect x="18.5" y="36.2" width="27" height="4" rx="2" fill="#4A2B12"/>
-  <path d="M20 41.8h24c0 2.8-2.3 4.4-5 4.4H25c-2.7 0-5-1.6-5-4.4z" fill="#FFE8CC"/>
-  <path d="M24 15.5l3 3M40 15.5l-3 3M32 13v4" stroke="#D3F9D8" stroke-width="2.4" stroke-linecap="round"/>
-</svg>
