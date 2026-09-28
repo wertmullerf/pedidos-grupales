@@ -39,13 +39,13 @@ export interface Timeline {
     by: string | null;
     itemId: string | null;
     rect?: Rect;
-    target?: 'line' | 'total';
+    target?: 'line' | 'person' | 'total';
   }[];
 }
 
 export const FPS = 30;
 export const HOOK_S = 2.6;
-export const CLOSE_S = 3.0;
+export const CLOSE_S = 2.6;
 
 export const HOOK = Math.round(HOOK_S * FPS);
 
@@ -83,9 +83,32 @@ export interface Sync {
   remotes: { phone: number; t: number; latencyMs: number; point: { x: number; y: number } }[];
 }
 
-/** Para cada toque que produjo un item_added, busca cuándo se pintó en los otros celulares. */
+type Rec = Timeline['records'][number];
+
+/** Destino del cometa en la pantalla que recibió el cambio (posición final, ya sin animación). */
+function remoteOf(tl: Timeline, r: Rec, tapT: number) {
+  // Hora: cuando se pintó (latencia real). Posición: la final, cuando terminó la animación.
+  const settled = tl.records.find(
+    (s) => s.kind === 'settled' && s.phone === r.phone && s.version === r.version,
+  );
+  const rect = settled?.rect ?? r.rect!;
+  return {
+    phone: r.phone,
+    t: r.t,
+    latencyMs: Math.round(r.t - tapT),
+    point:
+      r.target === 'line'
+        ? { x: rect.x + 70, y: rect.y + rect.height / 2 }
+        : { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 },
+  };
+}
+
+/**
+ * Cambios que viajan de un celular a los otros: cada toque que agregó un producto y cada persona
+ * que se sumó al pedido, con cuándo se pintó en las otras pantallas.
+ */
 export function computeSyncs(tl: Timeline): Sync[] {
-  const syncs: Sync[] = [];
+  const syncs: Sync[] = [...joinSyncs(tl)];
   for (const tap of tl.taps) {
     if (tap.t < tl.actionStart || tap.t > tl.actionEnd) continue;
     const me = tl.phones[tap.phone]?.participantId;
@@ -104,26 +127,45 @@ export function computeSyncs(tl: Timeline): Sync[] {
       .filter(
         (r) => r.kind === 'painted' && r.version === own.version && r.phone !== tap.phone && r.rect,
       )
-      .map((r) => {
-        // Hora: cuando se pintó (latencia real). Posición: la final, cuando terminó la animación.
-        const settled = tl.records.find(
-          (s) => s.kind === 'settled' && s.phone === r.phone && s.version === r.version,
-        );
-        const rect = settled?.rect ?? r.rect!;
-        return {
-          phone: r.phone,
-          t: r.t,
-          latencyMs: Math.round(r.t - tap.t),
-          point:
-            r.target === 'line'
-              ? { x: rect.x + 70, y: rect.y + rect.height / 2 }
-              : { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 },
-        };
-      });
+      .map((r) => remoteOf(tl, r, tap.t));
     if (remotes.length) {
       syncs.push({ from: tap.phone, tapT: tap.t, tap, version: own.version, remotes });
     }
   }
+  return syncs;
+}
+
+/**
+ * Alguien se suma: el cometa sale del último toque antes de sumarse ("Sumarme al pedido") y llega
+ * al avatar que aparece en las pantallas de quienes ya estaban.
+ */
+function joinSyncs(tl: Timeline): Sync[] {
+  const syncs: Sync[] = [];
+  tl.phones.forEach((phone, i) => {
+    if (!phone.participantId) return;
+    const painted = tl.records.filter(
+      (r) =>
+        r.kind === 'painted' &&
+        r.type === 'participant_joined' &&
+        r.by === phone.participantId &&
+        r.phone !== i &&
+        r.target === 'person' &&
+        r.rect,
+    );
+    if (!painted.length) return;
+    const first = Math.min(...painted.map((r) => r.t));
+    const tap = tl.taps
+      .filter((t) => t.phone === i && t.t <= first && first - t.t < 3000)
+      .sort((a, b) => b.t - a.t)[0];
+    if (!tap) return;
+    syncs.push({
+      from: i,
+      tapT: tap.t,
+      tap,
+      version: painted[0]!.version,
+      remotes: painted.map((r) => remoteOf(tl, r, tap.t)),
+    });
+  });
   return syncs;
 }
 

@@ -96,7 +96,13 @@ export function useOrderLive(tenantSlug: string, identity: Identity, onInvalidTo
             ? event.payload.itemId
             : null;
       record({ kind: 'applied', version: event.version, type: event.type, by, itemId });
-      recordPaint({ version: event.version, type: event.type, by, itemId });
+      recordPaint({
+        version: event.version,
+        type: event.type,
+        by,
+        itemId,
+        personId: event.type === 'participant_joined' ? by : null,
+      });
 
       // Lo propio ya se vio al tocar: solo resaltamos y avisamos lo que hizo otra persona.
       if (by === me) return;

@@ -8,9 +8,11 @@ export interface RecordEntry {
   type: string;
   by: string | null;
   itemId: string | null;
+  /** Para participant_joined: la persona que se sumó (se marca su avatar). */
+  personId?: string | null;
   rect?: { x: number; y: number; width: number; height: number };
-  /** Qué quedó marcado en pantalla: la línea del pedido o, si no está visible, el total del grupo. */
-  target?: 'line' | 'total';
+  /** Qué quedó marcado en pantalla: la línea, el avatar de quien se sumó o el total del grupo. */
+  target?: 'line' | 'person' | 'total';
 }
 
 declare global {
@@ -35,15 +37,18 @@ export function recordPaint(entry: Omit<RecordEntry, 'kind' | 'rect'>) {
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       const visible = (el: HTMLElement | null) => (el && el.offsetParent !== null ? el : null);
+      const person = entry.personId
+        ? visible(document.querySelector<HTMLElement>(`[data-person-id="${entry.personId}"]`))
+        : null;
       const line = entry.itemId
         ? visible(document.querySelector<HTMLElement>(`[data-line-id="${entry.itemId}"]`))
-        : null;
+        : person;
       // Si la línea no se ve (p. ej. esa persona está en la pestaña Menú), el cambio igual se nota
       // en el total del grupo de la barra de resumen.
       const el =
         line ?? visible(document.querySelector<HTMLElement>('[data-testid="group-total"]'));
       const r = el?.getBoundingClientRect();
-      const target = line ? 'line' : el ? 'total' : undefined;
+      const target = person ? 'person' : line ? 'line' : el ? 'total' : undefined;
       record({
         ...entry,
         kind: 'painted',

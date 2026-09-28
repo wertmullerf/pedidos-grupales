@@ -26,6 +26,7 @@ export function PeopleRow({
           {people.map((p) => (
             <motion.li
               key={p.id}
+              data-person-id={p.id}
               layout
               initial={{ opacity: 0, scale: 0.6 }}
               animate={{ opacity: 1, scale: flash.has(p.id) ? [1, 1.18, 1] : 1 }}
