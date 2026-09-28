@@ -1,0 +1,22 @@
+{
+  "name": "@pedido/video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Demo ../../demo/demo.mp4",
+    "render:gif": "remotion render src/index.ts Demo ../../demo/demo.gif --codec=gif --scale=0.4 --every-nth-frame=3",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "~6.0.3"
+  },
+  "dependencies": {
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@remotion/cli": "4.0.529",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "4.0.529"
+  }
+}

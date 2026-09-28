@@ -9,6 +9,8 @@ export interface RecordEntry {
   by: string | null;
   itemId: string | null;
   rect?: { x: number; y: number; width: number; height: number };
+  /** Qué quedó marcado en pantalla: la línea del pedido o, si no está visible, el total del grupo. */
+  target?: 'line' | 'total';
 }
 
 declare global {
@@ -32,14 +34,20 @@ export function recordPaint(entry: Omit<RecordEntry, 'kind' | 'rect'>) {
   if (!recording()) return;
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
-      const el = entry.itemId
-        ? document.querySelector<HTMLElement>(`[data-line-id="${entry.itemId}"]`)
+      const visible = (el: HTMLElement | null) => (el && el.offsetParent !== null ? el : null);
+      const line = entry.itemId
+        ? visible(document.querySelector<HTMLElement>(`[data-line-id="${entry.itemId}"]`))
         : null;
-      const r = el && el.offsetParent !== null ? el.getBoundingClientRect() : null;
+      // Si la línea no se ve (p. ej. esa persona está en la pestaña Menú), el cambio igual se nota
+      // en el total del grupo de la barra de resumen.
+      const el =
+        line ?? visible(document.querySelector<HTMLElement>('[data-testid="group-total"]'));
+      const r = el?.getBoundingClientRect();
       record({
         ...entry,
         kind: 'painted',
         rect: r ? { x: r.x, y: r.y, width: r.width, height: r.height } : undefined,
+        target: line ? 'line' : el ? 'total' : undefined,
       });
     }),
   );

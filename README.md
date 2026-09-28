@@ -31,6 +31,20 @@ npm run e2e            # Playwright: 3 navegadores, desconexión + resync, cierr
 npm run screenshots    # capturas de las pantallas principales en demo/screenshots (con dev:web corriendo)
 ```
 
+### Video de la demo
+
+`demo/demo.mp4` (4:5, 1080×1350) y `demo/demo.gif` se generan en dos pasos:
+
+```bash
+npm run record-demo              # Playwright graba 3 celulares usando la app en vivo (con dev:web corriendo)
+npm run render -w apps/video     # Remotion arma el MP4: gancho, toques, sincronización, zoom, subtítulos
+npm run render:gif -w apps/video # GIF liviano
+```
+
+La grabación exporta un timeline con cada toque y el momento en que cada cambio quedó **pintado**
+en las otras pantallas. La etiqueta "sincronizado en N ms" del video usa esa latencia medida, no un
+número inventado. Remotion es gratis para uso individual; revisá su licencia si lo usa una empresa.
+
 El e2e levanta siempre su propio servidor de Vite (no reutiliza uno que ya esté corriendo).
 
 `npm run simulate -- --code ABC234` suma los bots a un pedido que tengas abierto en el navegador,

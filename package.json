@@ -5,6 +5,7 @@
   "workspaces": [
     "apps/server",
     "apps/web",
+    "apps/video",
     "packages/shared",
     "packages/client"
   ],
@@ -20,7 +21,8 @@
     "db:seed": "npm run db:seed -w apps/server",
     "simulate": "tsx --conditions=source scripts/simulate.ts",
     "screenshots": "tsx --conditions=source scripts/screenshots.ts",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "record-demo": "tsx --conditions=source scripts/record-demo.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -34,6 +36,7 @@
     "typescript-eslint": "^8.70.1"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "esbuild@0.28.1": true
   }
 }
