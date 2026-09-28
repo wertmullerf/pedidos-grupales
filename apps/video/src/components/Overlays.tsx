@@ -1,15 +1,15 @@
-import { Easing, interpolate, useCurrentFrame } from 'remotion';
-import { ACCENT, FONT } from '../layout';
+import { Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { ACCENT, FONT, INK } from '../layout';
+
+const clamp = { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' } as const;
 
 /** Toque: punto de "dedo" que se apoya y un círculo que se expande. */
-export function TapRipple({ x, y, frame: at }: { x: number; y: number; frame: number }) {
+export function TapRipple({ x, y, at }: { x: number; y: number; at: number }) {
   const f = useCurrentFrame() - at;
-  if (f < 0 || f > 22) return null;
-  const ring = interpolate(f, [0, 20], [0.4, 1.9], { easing: Easing.out(Easing.cubic) });
-  const ringOpacity = interpolate(f, [0, 20], [0.9, 0], { extrapolateRight: 'clamp' });
-  const dotOpacity = interpolate(f, [0, 4, 12, 20], [0, 0.85, 0.85, 0], {
-    extrapolateRight: 'clamp',
-  });
+  if (f < -3 || f > 24) return null;
+  const ring = interpolate(f, [0, 22], [0.35, 2.1], { ...clamp, easing: Easing.out(Easing.cubic) });
+  const ringOpacity = interpolate(f, [0, 22], [0.85, 0], clamp);
+  const press = interpolate(f, [-3, 0, 6, 16], [0, 1, 1, 0], clamp);
   return (
     <>
       <div
@@ -20,23 +20,23 @@ export function TapRipple({ x, y, frame: at }: { x: number; y: number; frame: nu
           width: 52,
           height: 52,
           borderRadius: '50%',
-          border: '4px solid white',
-          boxShadow: '0 0 0 2px rgba(0,0,0,.35)',
+          border: `4px solid ${INK}`,
           transform: `scale(${ring})`,
-          opacity: ringOpacity,
+          opacity: ringOpacity * 0.55,
         }}
       />
       <div
         style={{
           position: 'absolute',
-          left: x - 15,
-          top: y - 15,
-          width: 30,
-          height: 30,
+          left: x - 17,
+          top: y - 17,
+          width: 34,
+          height: 34,
           borderRadius: '50%',
-          background: 'rgba(255,255,255,.9)',
-          boxShadow: '0 2px 8px rgba(0,0,0,.4)',
-          opacity: dotOpacity,
+          background: 'rgba(20,20,20,.28)',
+          border: '2px solid rgba(255,255,255,.9)',
+          transform: `scale(${0.7 + press * 0.3})`,
+          opacity: press,
         }}
       />
     </>
@@ -44,137 +44,187 @@ export function TapRipple({ x, y, frame: at }: { x: number; y: number; frame: nu
 }
 
 /**
- * Línea animada del celular que tocó al que recibió el cambio, destello en el destino y
- * etiqueta con la latencia real medida.
+ * El cambio viaja del celular que tocó al que lo recibe: un cometa con estela del color de la
+ * persona y un estallido al llegar, en el frame en que realmente se pintó en esa pantalla.
  */
-export function SyncLine({
+export function Comet({
   from,
   to,
-  startFrame,
-  arriveFrame,
-  latencyMs,
-  showLabel,
+  start,
+  arrive,
   color,
 }: {
   from: { x: number; y: number };
   to: { x: number; y: number };
-  startFrame: number;
-  arriveFrame: number;
-  latencyMs: number;
-  showLabel: boolean;
+  start: number;
+  arrive: number;
   color: string;
 }) {
   const frame = useCurrentFrame();
-  // La latencia real (~50 ms) es menos de 2 frames: la línea se dibuja un poco más lento para que
-  // se vea, pero el destello y la etiqueta salen en el frame real en que se pintó el cambio.
-  const drawEnd = Math.max(arriveFrame, startFrame + 9);
-  const f = frame - startFrame;
-  if (f < 0 || frame > drawEnd + 40) return null;
+  // La latencia real (30–70 ms) es 1–2 frames: el viaje se dibuja en ~9 frames para que se vea,
+  // y el estallido cae en el frame real en que se pintó el cambio (o apenas después).
+  const end = Math.max(arrive, start + 9);
+  if (frame < start || frame > end + 26) return null;
 
   const cx = (from.x + to.x) / 2;
-  const cy = Math.min(from.y, to.y) - 150;
-  const d = `M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`;
-  const length = 1400;
-  const progress = interpolate(frame, [startFrame, drawEnd], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-    easing: Easing.out(Easing.quad),
+  const cy = Math.min(from.y, to.y) - 170;
+  const pt = (t: number) => ({
+    x: (1 - t) ** 2 * from.x + 2 * (1 - t) * t * cx + t ** 2 * to.x,
+    y: (1 - t) ** 2 * from.y + 2 * (1 - t) * t * cy + t ** 2 * to.y,
   });
-  const fade = interpolate(frame, [drawEnd + 18, drawEnd + 40], [1, 0], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
+  const p = interpolate(frame, [start, end], [0, 1], {
+    ...clamp,
+    easing: Easing.inOut(Easing.quad),
   });
-  const flash = frame - drawEnd;
+  const trail = Array.from({ length: 14 }, (_, k) => Math.max(0, p - k * 0.035));
+  const burst = frame - end;
 
   return (
     <>
-      <svg
-        style={{ position: 'absolute', inset: 0, overflow: 'visible', opacity: fade }}
-        width="100%"
-        height="100%"
-      >
-        <path
-          d={d}
-          fill="none"
-          stroke={color}
-          strokeWidth={6}
-          strokeLinecap="round"
-          strokeDasharray={length}
-          strokeDashoffset={length * (1 - progress)}
-          style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,.45))' }}
-        />
-      </svg>
-      {flash >= 0 && flash < 20 && (
-        <div
-          style={{
-            position: 'absolute',
-            left: to.x - 30,
-            top: to.y - 30,
-            width: 60,
-            height: 60,
-            borderRadius: '50%',
-            background: color,
-            opacity: interpolate(flash, [0, 20], [0.55, 0]),
-            transform: `scale(${interpolate(flash, [0, 20], [0.4, 2.2])})`,
-          }}
-        />
-      )}
-      {showLabel && flash >= 0 && (
-        <div
-          style={{
-            position: 'absolute',
-            left: cx,
-            top: cy + 40,
-            transform: `translate(-50%, -50%) scale(${interpolate(flash, [0, 6], [0.8, 1], {
-              extrapolateRight: 'clamp',
-            })})`,
-            opacity: fade * interpolate(flash, [0, 5], [0, 1], { extrapolateRight: 'clamp' }),
-            background: 'white',
-            color: '#111',
-            fontFamily: FONT,
-            fontWeight: 700,
-            fontSize: 26,
-            padding: '8px 14px',
-            borderRadius: 10,
-            whiteSpace: 'nowrap',
-            boxShadow: '0 6px 20px rgba(0,0,0,.35)',
-          }}
-        >
-          sincronizado en <span style={{ color: ACCENT }}>{latencyMs} ms</span>
-        </div>
+      {p < 1 &&
+        trail.map((t, k) => {
+          const q = pt(t);
+          const size = 20 - k * 1.1;
+          return (
+            <div
+              key={k}
+              style={{
+                position: 'absolute',
+                left: q.x - size / 2,
+                top: q.y - size / 2,
+                width: size,
+                height: size,
+                borderRadius: '50%',
+                background: color,
+                opacity: (1 - k / 14) * 0.9,
+              }}
+            />
+          );
+        })}
+      {burst >= 0 && (
+        <>
+          <div
+            style={{
+              position: 'absolute',
+              left: to.x - 34,
+              top: to.y - 34,
+              width: 68,
+              height: 68,
+              borderRadius: '50%',
+              border: `5px solid ${color}`,
+              transform: `scale(${interpolate(burst, [0, 18], [0.3, 1.9], clamp)})`,
+              opacity: interpolate(burst, [0, 18], [1, 0], clamp),
+            }}
+          />
+          {Array.from({ length: 8 }, (_, k) => {
+            const a = (k / 8) * Math.PI * 2;
+            const d = interpolate(burst, [0, 16], [8, 56], {
+              ...clamp,
+              easing: Easing.out(Easing.cubic),
+            });
+            return (
+              <div
+                key={k}
+                style={{
+                  position: 'absolute',
+                  left: to.x + Math.cos(a) * d - 4,
+                  top: to.y + Math.sin(a) * d - 4,
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: color,
+                  opacity: interpolate(burst, [0, 16], [1, 0], clamp),
+                }}
+              />
+            );
+          })}
+        </>
       )}
     </>
   );
 }
 
-/** Subtítulo grande, legible sin sonido. */
-export function Subtitle({ text, from }: { text: string; from: number }) {
-  const f = useCurrentFrame() - from;
-  const opacity = interpolate(f, [0, 8], [0, 1], { extrapolateRight: 'clamp' });
-  const y = interpolate(f, [0, 8], [16, 0], {
-    extrapolateRight: 'clamp',
+/**
+ * Recuadro animado alrededor del total del celular de Ana y, arriba (centrada en `labelX`), la
+ * etiqueta "Total exacto" con la latencia real del momento clave, unidas por una línea vertical.
+ */
+export function TotalCallout({
+  rect,
+  labelX,
+  at,
+  until,
+  latencyMs,
+}: {
+  rect: { x: number; y: number; width: number; height: number };
+  labelX: number;
+  at: number;
+  until: number;
+  latencyMs: number;
+}) {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  if (frame < at || frame > until + 12) return null;
+  const pop = spring({ frame: frame - at, fps, config: { damping: 13, stiffness: 160 } });
+  const line = interpolate(frame - at, [4, 14], [0, 1], {
+    ...clamp,
     easing: Easing.out(Easing.cubic),
   });
+  const label = spring({ frame: frame - at - 8, fps, config: { damping: 12, stiffness: 170 } });
+  const out = interpolate(frame, [until, until + 12], [1, 0], clamp);
+  const pad = 8;
+  const boxTop = rect.y - pad;
+  const labelBottom = boxTop - 16;
+  const boxCx = rect.x + rect.width / 2;
   return (
-    <div
-      style={{
-        position: 'absolute',
-        left: 60,
-        right: 60,
-        bottom: 70,
-        textAlign: 'center',
-        color: 'white',
-        fontFamily: FONT,
-        fontWeight: 750,
-        fontSize: 54,
-        lineHeight: 1.12,
-        textWrap: 'balance',
-        letterSpacing: '-0.01em',
-        opacity,
-        transform: `translateY(${y}px)`,
-      }}
-    >
-      {text}
+    <div style={{ opacity: out }}>
+      <div
+        style={{
+          position: 'absolute',
+          left: rect.x - pad,
+          top: rect.y - pad,
+          width: rect.width + pad * 2,
+          height: rect.height + pad * 2,
+          borderRadius: 10,
+          border: `4px solid ${ACCENT}`,
+          transform: `scale(${0.8 + pop * 0.2})`,
+          opacity: pop,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          left: boxCx - 2,
+          top: boxTop - (boxTop - labelBottom) * line,
+          width: 4,
+          height: (boxTop - labelBottom) * line,
+          background: ACCENT,
+          borderRadius: 2,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          left: labelX,
+          top: labelBottom,
+          transform: `translate(-50%, -100%) scale(${label})`,
+          transformOrigin: 'center bottom',
+          // Una sola pastilla, compacta, en la franja libre arriba del total: no tapa las líneas.
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          background: ACCENT,
+          color: 'white',
+          padding: '7px 14px',
+          borderRadius: 10,
+          whiteSpace: 'nowrap',
+          fontFamily: FONT,
+          fontSize: 22,
+          fontWeight: 650,
+        }}
+      >
+        <span style={{ fontWeight: 800, fontSize: 24 }}>✓ Total exacto</span>
+        <span style={{ opacity: 0.9 }}>· sincronizado en {latencyMs} ms</span>
+      </div>
     </div>
   );
 }

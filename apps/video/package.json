@@ -5,7 +5,6 @@
   "scripts": {
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts Demo ../../demo/demo.mp4",
-    "render:gif": "remotion render src/index.ts Demo ../../demo/demo.gif --codec=gif --scale=0.4 --every-nth-frame=3",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

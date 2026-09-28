@@ -3,7 +3,7 @@
 // epoch, para medir la latencia real de sincronización entre pantallas.
 
 export interface RecordEntry {
-  kind: 'applied' | 'painted';
+  kind: 'applied' | 'painted' | 'settled';
   version: number;
   type: string;
   by: string | null;
@@ -43,12 +43,26 @@ export function recordPaint(entry: Omit<RecordEntry, 'kind' | 'rect'>) {
       const el =
         line ?? visible(document.querySelector<HTMLElement>('[data-testid="group-total"]'));
       const r = el?.getBoundingClientRect();
+      const target = line ? 'line' : el ? 'total' : undefined;
       record({
         ...entry,
         kind: 'painted',
         rect: r ? { x: r.x, y: r.y, width: r.width, height: r.height } : undefined,
-        target: line ? 'line' : el ? 'total' : undefined,
+        target,
       });
+      // La posición final se mide cuando terminó la animación de entrada (y la de otras líneas que
+      // entraron a la vez y la pudieron correr). El momento del pintado sigue siendo el de arriba.
+      setTimeout(() => {
+        const s = el?.getBoundingClientRect();
+        if (s) {
+          record({
+            ...entry,
+            kind: 'settled',
+            rect: { x: s.x, y: s.y, width: s.width, height: s.height },
+            target,
+          });
+        }
+      }, 450);
     }),
   );
 }

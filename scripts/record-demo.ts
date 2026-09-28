@@ -1,15 +1,28 @@
-// Graba 3 celulares (Ana, Beto, Cata) usando la app en vivo y exporta los videos + un timeline con
-// los toques, los subtítulos y cuándo se PINTÓ cada cambio en cada pantalla (latencia real).
-// Remotion (apps/video) arma el video final a partir de eso.
+// Graba 3 celulares (Ana, Beto, Cata) usando la app en vivo y exporta un timeline para Remotion
+// (apps/video): cuadros de pantalla con la hora exacta en que se pintaron, toques, subtítulos y
+// cuándo se pintó cada cambio en cada pantalla (latencia real).
+//
+// Se graba con el screencast de Chrome (CDP) y no con el video de Playwright: cada cuadro trae su
+// timestamp real, en el mismo reloj que los toques y los eventos. Así las tres pantallas quedan
+// alineadas al milisegundo en el video final (con el video de Playwright había que estimar cuándo
+// arrancaba cada grabación y los celulares quedaban desfasados).
 //
 // Requiere el stack de docker y el front corriendo (npm run dev:web).
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, type BrowserContext, type Page } from '@playwright/test';
+import {
+  chromium,
+  expect,
+  type BrowserContext,
+  type CDPSession,
+  type Page,
+} from '@playwright/test';
 import { BASE_URL, MOBILE, TENANT, goTab, tapAdd } from '../e2e/helpers';
 
 const OUT = 'apps/video/public/recording';
-const VIEWPORT = MOBILE.viewport!;
+/** Área de la app en un iPhone 17 (402×874 pt) debajo de la barra de estado. */
+const VIEWPORT = { width: 402, height: 820 };
+const DPR = 2;
 
 const PEOPLE = [
   { name: 'Ana', role: 'arma el pedido' },
@@ -35,13 +48,16 @@ const INSTRUMENT = () => {
   );
 };
 
+interface Frame {
+  t: number;
+  file: string;
+}
 interface Phone {
   name: string;
   role: string;
   participantId: string | null;
-  videoStart: number;
-  file: string;
   color?: string;
+  frames: Frame[];
 }
 interface Tap {
   phone: number;
@@ -57,7 +73,6 @@ interface Rec {
   type: string;
   by: string | null;
 }
-
 interface Mark {
   t: number;
   kind: 'subtitle' | 'zoom-in' | 'zoom-out';
@@ -66,12 +81,49 @@ interface Mark {
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function scrollToProduct(page: Page, product: string) {
-  await page.evaluate((name) => {
-    document
-      .querySelector(`[data-name="${name}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, product);
+/** Graba la pantalla con el screencast de CDP: un JPEG por cuadro pintado, con su timestamp real. */
+async function startScreencast(page: Page, context: BrowserContext, dir: string, frames: Frame[]) {
+  await mkdir(dir, { recursive: true });
+  const cdp: CDPSession = await context.newCDPSession(page);
+  let n = 0;
+  const writes: Promise<void>[] = [];
+  cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
+    const t = metadata.timestamp ? metadata.timestamp * 1000 : Date.now();
+    const file = `${String(n++).padStart(5, '0')}.jpg`;
+    frames.push({ t, file: `recording/${path.basename(dir)}/${file}` });
+    writes.push(writeFile(path.join(dir, file), Buffer.from(data, 'base64')));
+    void cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  });
+  await cdp.send('Page.startScreencast', {
+    format: 'jpeg',
+    quality: 88,
+    maxWidth: VIEWPORT.width * DPR,
+    maxHeight: VIEWPORT.height * DPR,
+    everyNthFrame: 1,
+  });
+  return async () => {
+    await cdp.send('Page.stopScreencast').catch(() => {});
+    await Promise.all(writes);
+  };
+}
+
+/** Espera a que las tres pantallas muestren el mismo total del grupo (y lo devuelve). */
+async function expectSameTotal(pages: Page[], expected?: string) {
+  const read = () =>
+    Promise.all(
+      pages.map(async (p) =>
+        ((await p.getByTestId('group-total').textContent()) ?? '').replace(/\s+/g, ' ').trim(),
+      ),
+    );
+  await expect
+    .poll(async () => new Set(await read()).size, {
+      message: 'las 3 pantallas muestran el mismo total',
+      timeout: 5000,
+    })
+    .toBe(1);
+  const [total] = await read();
+  if (expected) expect(total).toBe(expected);
+  return total!;
 }
 
 async function main() {
@@ -81,23 +133,20 @@ async function main() {
 
   const contexts: BrowserContext[] = [];
   const pages: Page[] = [];
-  const videoStart: number[] = [];
-  for (const [i] of PEOPLE.entries()) {
+  for (let i = 0; i < PEOPLE.length; i++) {
     const context = await browser.newContext({
       ...MOBILE,
+      viewport: VIEWPORT,
+      deviceScaleFactor: DPR,
       baseURL: BASE_URL,
-      recordVideo: { dir: path.join(OUT, `raw-${i}`), size: VIEWPORT },
     });
     await context.addInitScript(INSTRUMENT);
     contexts.push(context);
-    // El video arranca cuando se crea la página: tomamos el punto medio como origen.
-    const before = Date.now();
     pages.push(await context.newPage());
-    videoStart.push((before + Date.now()) / 2);
   }
   const [ana, beto, cata] = pages as [Page, Page, Page];
 
-  // --- Preparación (queda fuera del corte final) ---
+  // --- Preparación (no se graba) ---
   await ana.goto('/');
   await ana.getByPlaceholder('Tu nombre').fill('Ana');
   await ana.getByRole('button', { name: 'Crear pedido grupal' }).click();
@@ -115,50 +164,68 @@ async function main() {
     await page.getByTestId('connection').filter({ hasText: 'Conectado' }).waitFor();
   }
   await tapAdd(ana, 'Clásica');
-  await pause(600);
   await goTab(ana, 'Pedido');
-  await pause(2500); // que se vayan los avisos de la preparación
+  await expectSameTotal(pages, '$ 9.500');
+  await pause(2800); // que se vayan los avisos de la preparación
 
-  // --- Acción ---
+  // --- Grabación ---
+  const phones: Phone[] = PEOPLE.map((p) => ({ ...p, participantId: null, frames: [] }));
+  const stops = await Promise.all(
+    pages.map((page, i) =>
+      startScreencast(page, contexts[i]!, path.join(OUT, `phone-${i}`), phones[i]!.frames),
+    ),
+  );
+  await pause(600);
+
   const marks: Mark[] = [];
   const mark = (kind: Mark['kind'], text?: string) => marks.push({ t: Date.now(), kind, text });
+  const checks: string[] = [];
   const actionStart = Date.now();
 
-  mark('subtitle', 'Cada uno elige desde su celular');
+  mark('subtitle', 'Cada uno elige *desde su celular*');
   await pause(1500);
   await beto.getByRole('button', { name: 'Agregar Doble Ahumada', exact: true }).click();
-  await pause(900);
-  mark('subtitle', 'Lo que suma uno aparece al instante en los demás');
-  await pause(1700);
+  checks.push(await expectSameTotal(pages, '$ 22.000'));
+  await pause(700);
+  mark('subtitle', 'Lo que suma uno aparece *al instante*');
+  await pause(1600);
   await cata.getByRole('button', { name: 'Agregar Veggie de Lentejas', exact: true }).click();
-  await pause(2300);
+  checks.push(await expectSameTotal(pages, '$ 31.800'));
+  await pause(2000);
 
   // Momento clave: dos personas suman el mismo producto exactamente a la vez.
-  mark('subtitle', 'Dos personas suman lo mismo a la vez…');
-  await Promise.all([
-    scrollToProduct(beto, 'Papas rústicas'),
-    scrollToProduct(cata, 'Papas rústicas'),
-  ]);
+  mark('subtitle', 'Dos personas suman lo mismo *a la vez*…');
+  await Promise.all(
+    [beto, cata].map((p) =>
+      p.evaluate(() =>
+        document
+          .querySelector('[data-name="Papas rústicas"]')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+      ),
+    ),
+  );
   await pause(1200);
   mark('zoom-in');
   await Promise.all([
     beto.getByRole('button', { name: 'Agregar Papas rústicas', exact: true }).click(),
     cata.getByRole('button', { name: 'Agregar Papas rústicas', exact: true }).click(),
   ]);
-  await pause(1300);
-  mark('subtitle', '…y el total queda exacto, sin pisarse');
-  await pause(2400);
+  checks.push(await expectSameTotal(pages, '$ 40.200'));
+  await pause(1000);
+  mark('subtitle', '…y el total queda *exacto*');
+  await pause(2600);
   mark('zoom-out');
   await pause(700);
 
-  mark('subtitle', 'Ana cierra el pedido: cada uno ve cuánto paga');
+  mark('subtitle', 'Al cerrar, cada uno ve *cuánto paga*');
   await ana.getByRole('button', { name: 'Cerrar pedido' }).click();
   await ana.getByRole('heading', { name: 'Resumen final' }).waitFor();
-  await pause(3200);
+  await pause(3000);
   const actionEnd = Date.now();
 
+  for (const stop of stops) await stop();
+
   // --- Exportar ---
-  const phones: Phone[] = [];
   const taps: Tap[] = [];
   const records: Rec[] = [];
   for (const [i, page] of pages.entries()) {
@@ -167,18 +234,10 @@ async function main() {
       const identity = Object.entries(sessionStorage).find(([k]) => k.startsWith('pedido:'))?.[1];
       return { records: w.__pgRecord, taps: w.__pgTaps, identity };
     });
-    const identity = data.identity ? JSON.parse(data.identity) : null;
-    phones.push({
-      name: PEOPLE[i]!.name,
-      role: PEOPLE[i]!.role,
-      participantId: identity?.participantId ?? null,
-      videoStart: videoStart[i]!,
-      file: `recording/phone-${i}.webm`,
-    });
+    phones[i]!.participantId = data.identity ? JSON.parse(data.identity).participantId : null;
     for (const tap of data.taps as Omit<Tap, 'phone'>[]) taps.push({ phone: i, ...tap });
     for (const rec of data.records as Omit<Rec, 'phone'>[]) records.push({ phone: i, ...rec });
   }
-  // Colores de cada participante, tal como los asignó el server.
   const snapshot = await ana.evaluate(async (c) => {
     const identity = Object.entries(sessionStorage).find(([k]) => k.startsWith('pedido:'))?.[1];
     const token = identity ? JSON.parse(identity).token : '';
@@ -189,19 +248,15 @@ async function main() {
   }, code);
   for (const phone of phones) {
     const p = snapshot.participants.find((x: { id: string }) => x.id === phone.participantId);
-    Object.assign(phone, { color: p?.color ?? '#999999' });
+    phone.color = p?.color ?? '#999999';
   }
 
   for (const context of contexts) await context.close();
-  for (const [i, page] of pages.entries()) {
-    await page.video()!.saveAs(path.join(OUT, `phone-${i}.webm`));
-  }
   await browser.close();
-  for (const [i] of PEOPLE.entries())
-    await rm(path.join(OUT, `raw-${i}`), { recursive: true, force: true });
 
   const timeline = {
     viewport: VIEWPORT,
+    dpr: DPR,
     code,
     actionStart,
     actionEnd,
@@ -212,39 +267,22 @@ async function main() {
   };
   await writeFile(path.join(OUT, 'timeline.json'), JSON.stringify(timeline, null, 2));
 
-  // Resumen de latencias medidas (tap en un celular → pintado en los otros).
-  const own = (i: number, rec: { by: string | null }) => rec.by === phones[i]!.participantId;
-  for (const tap of taps as { phone: number; t: number }[]) {
-    const ev = (
-      records as {
-        phone: number;
-        kind: string;
-        t: number;
-        version: number;
-        by: string;
-        type: string;
-      }[]
-    )
-      .filter(
-        (r) =>
-          r.phone === tap.phone &&
-          r.kind === 'applied' &&
-          own(tap.phone, r) &&
-          r.t >= tap.t &&
-          r.t - tap.t < 1500,
-      )
+  console.log(`  cuadros: ${phones.map((p) => `${p.name} ${p.frames.length}`).join(' · ')}`);
+  console.log(`  total igual en las 3 pantallas después de cada paso: ${checks.join(' → ')}`);
+  for (const tap of taps.filter((t) => t.t >= actionStart)) {
+    const me = phones[tap.phone]!.participantId;
+    const ev = records
+      .filter((r) => r.phone === tap.phone && r.kind === 'applied' && r.by === me && r.t >= tap.t)
       .sort((a, b) => a.t - b.t)[0];
     if (!ev || ev.type !== 'item_added') continue;
-    const remote = (records as { phone: number; kind: string; t: number; version: number }[])
+    const remote = records
       .filter((r) => r.kind === 'painted' && r.version === ev.version && r.phone !== tap.phone)
       .map((r) => Math.round(r.t - tap.t));
     console.log(
       `  ${phones[tap.phone]!.name} v${ev.version}: pintado en los demás a ${remote.join(' / ')} ms`,
     );
   }
-  console.log(
-    `\n✓ ${OUT}/ (pedido ${code}, ${((actionEnd - actionStart) / 1000).toFixed(1)} s de acción)`,
-  );
+  console.log(`\n✓ ${OUT}/ (pedido ${code}, ${((actionEnd - actionStart) / 1000).toFixed(1)} s)`);
 }
 
 main().catch((err) => {

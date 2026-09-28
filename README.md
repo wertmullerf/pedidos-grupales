@@ -33,23 +33,19 @@ npm run screenshots    # capturas de las pantallas principales en demo/screensho
 
 ### Video de la demo
 
-`demo/demo.mp4` (4:5, 1080×1350) y `demo/demo.gif` se generan en dos pasos:
+`demo/demo.mp4` (4:5, 1080×1350, ~20 s) se genera en dos pasos:
 
 ```bash
-npm run record-demo              # Playwright graba 3 celulares usando la app en vivo (con dev:web corriendo)
-npm run render -w apps/video     # Remotion arma el MP4: gancho, toques, sincronización, zoom, subtítulos
-npm run render:gif -w apps/video # GIF liviano
+npm run record-demo              # Playwright usa la app en vivo en 3 celulares (con dev:web corriendo)
+npm run render -w apps/video     # Remotion arma el video: gancho, toques, sincronización, zoom, subtítulos
 ```
 
-La grabación exporta un timeline con cada toque y el momento en que cada cambio quedó **pintado**
-en las otras pantallas. La etiqueta "sincronizado en N ms" del video usa esa latencia medida, no un
-número inventado. Remotion es gratis para uso individual; revisá su licencia si lo usa una empresa.
-
-El e2e levanta siempre su propio servidor de Vite (no reutiliza uno que ya esté corriendo).
-
-`npm run simulate -- --code ABC234` suma los bots a un pedido que tengas abierto en el navegador,
-para verlos operar en vivo. Con `--urls http://localhost:3001,http://localhost:3002` cada bot se
-conecta directo a una instancia distinta.
+La grabación usa el screencast de Chrome (CDP): cada cuadro trae la hora exacta en que se pintó,
+en el mismo reloj que los toques y los eventos, así que en el video las tres pantallas están
+alineadas al milisegundo. El script además verifica que las tres muestren el mismo total después
+de cada paso (si no, falla). La etiqueta "sincronizado en N ms" usa la latencia medida (toque en un
+celular → cambio pintado en los otros), no un número inventado. Remotion es gratis para uso
+individual; revisá su licencia si lo usa una empresa.
 
 ## Decisiones de concurrencia
 
